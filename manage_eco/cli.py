@@ -23,7 +23,7 @@ def build_parser() -> argparse.ArgumentParser:
     for name, help_ in (("income", "ghi khoản thu"), ("expense", "ghi khoản chi")):
         s = sub.add_parser(name, help=help_)
         s.add_argument("amount", help="vd: 200k, 1.5tr, 1.250.000, 50k+20k, 3x150k, 1tr:4")
-        s.add_argument("category")
+        s.add_argument("category", nargs="?", default="", help="(không bắt buộc)")
         s.add_argument("-n", "--note", default="")
         s.add_argument("-d", "--date")
 
@@ -90,7 +90,29 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--days", type=int, default=90, help="số ngày lùi lại (0 = từ đầu)")
     s.add_argument("--ahead", type=int, default=90, help="số ngày dự báo")
 
-    s = sub.add_parser("goal", help="tính tiền cần để dành mỗi tháng")
+    goal = sub.add_parser("goal", help="mục tiêu tiết kiệm / hũ tiết kiệm")
+    gsub = goal.add_subparsers(dest="sub")
+    s = gsub.add_parser("add", help="thêm mục tiêu tiết kiệm")
+    s.add_argument("name")
+    s.add_argument("target")
+    s.add_argument("--by", required=True)
+    s.add_argument("--saved", default=None)
+    gsub.add_parser("list", help="liệt kê mục tiêu")
+    s = gsub.add_parser("save", help="góp tiền vào mục tiêu")
+    s.add_argument("id", type=int)
+    s.add_argument("amount")
+    s = gsub.add_parser("take", help="rút tiền từ mục tiêu")
+    s.add_argument("id", type=int)
+    s.add_argument("amount")
+    s = gsub.add_parser("edit", help="sửa mục tiêu")
+    s.add_argument("id", type=int)
+    s.add_argument("--name")
+    s.add_argument("--target")
+    s.add_argument("--by")
+    s.add_argument("--saved")
+    s = gsub.add_parser("rm", help="xoá mục tiêu")
+    s.add_argument("id", type=int)
+    s = gsub.add_parser("_calc", help="tính tiền cần để dành mỗi tháng")
     s.add_argument("target")
     s.add_argument("--by", required=True)
 
@@ -107,13 +129,39 @@ def build_parser() -> argparse.ArgumentParser:
 _GLOBAL = ("json", "db", "today", "cmd", "sub")
 
 
+def _preprocess_argv(argv: Optional[List[str]]) -> Optional[List[str]]:
+    if argv is None:
+        argv = sys.argv[1:]
+    out = []
+    i = 0
+    while i < len(argv):
+        out.append(argv[i])
+        if argv[i] == "goal":
+            if i + 1 == len(argv):
+                out.append("list")
+            elif argv[i + 1] not in ("add", "list", "save", "take", "edit", "rm", "-h", "--help"):
+                out.append("_calc")
+        i += 1
+    return out
+
+
 def main(argv: Optional[List[str]] = None, store: Optional[Store] = None,
          console=None, today: Optional[date] = None) -> int:
+    argv = _preprocess_argv(argv)
     args = build_parser().parse_args(argv)
     as_json = args.json or os.environ.get("ECO_JSON") == "1"
     if args.cmd is None:  # bare `eco`: open the TUI, or the dashboard when scripted
         args.cmd = "dash" if as_json or not sys.stdout.isatty() else "ui"
-    cmd = args.cmd + (" " + args.sub if getattr(args, "sub", None) else "")
+    if args.cmd == "goal":
+        sub_name = getattr(args, "sub", None)
+        if sub_name == "_calc":
+            cmd = "goal"
+        elif sub_name:
+            cmd = "goal " + sub_name
+        else:
+            cmd = "goal list"
+    else:
+        cmd = args.cmd + (" " + args.sub if getattr(args, "sub", None) else "")
     params = {k: v for k, v in vars(args).items() if k not in _GLOBAL}
 
     try:

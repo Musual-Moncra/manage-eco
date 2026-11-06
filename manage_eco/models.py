@@ -22,7 +22,7 @@ class Transaction:
     date: date
     amount: int
     kind: str  # INCOME | EXPENSE
-    category: str
+    category: str = ""
     note: str = ""
     id: Optional[int] = None
 
@@ -54,3 +54,15 @@ class Budget:
     """Monthly spending limit for one category."""
     category: str
     limit: int
+
+
+@dataclass
+class Goal:
+    """A savings jar ("hũ tiết kiệm"): money set aside (`saved`) towards `target` by a date.
+
+    Saved money stays part of the balance; "free" money = balance - total saved."""
+    name: str
+    target: int
+    by: date
+    saved: int = 0
+    id: Optional[int] = None

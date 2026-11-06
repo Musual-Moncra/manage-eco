@@ -699,6 +699,62 @@ class JsonCliTest(unittest.TestCase):
                          "stdout=%r stderr=%r" % (proc.stdout, proc.stderr))
         self.assertNotIn("rich imported", proc.stderr)
 
+    def test_transaction_optional_category(self):
+        p = self.ok("expense", "50000", "-d", "2026-11-02")
+        tx = p["data"]["transaction"]
+        self.assertEqual(tx["amount"], 50000)
+        self.assertEqual(tx["category"], "")
+
+        p = self.ok("summary", "--month", "2026-11")
+        cats = [c["category"] for c in p["data"]["by_category"]]
+        self.assertIn("Khác", cats)
+
+        p2 = self.ok("income", "100000", "salary", "-d", "2026-11-01")
+        tid = p2["data"]["transaction"]["id"]
+        p3 = self.ok("edit", str(tid), "--category", "")
+        self.assertEqual(p3["data"]["transaction"]["category"], "")
+
+    def test_goal_jars_flow(self):
+        p = self.ok("goal", "list")
+        self.assertEqual(p["data"]["goals"], [])
+        self.assertEqual(p["data"]["total_saved"], 0)
+
+        p = self.ok("goal", "add", "Laptop", "30000000", "--by", "2027-12-31")
+        self.assert_command(p, "goal add")
+        g = p["data"]["goal"]
+        gid = g["id"]
+        self.assertEqual(g["name"], "Laptop")
+        self.assertEqual(g["target"], 30000000)
+        self.assertEqual(g["saved"], 0)
+        self.assertEqual(g["remaining"], 30000000)
+        self.assertEqual(g["pct"], 0.0)
+
+        p = self.ok("goal", "save", str(gid), "10000000")
+        self.assert_command(p, "goal save")
+        self.assertEqual(p["data"]["saved_added"], 10000000)
+        self.assertEqual(p["data"]["goal"]["saved"], 10000000)
+        self.assertEqual(p["data"]["total_saved"], 10000000)
+
+        p = self.ok("goal", "take", str(gid), "2000000")
+        self.assert_command(p, "goal take")
+        self.assertEqual(p["data"]["taken"], 2000000)
+        self.assertEqual(p["data"]["goal"]["saved"], 8000000)
+
+        self.err("invalid", 2, "goal", "take", str(gid), "50000000")
+
+        p = self.ok("goal", "edit", str(gid), "--name", "MacBook", "--target", "35000000")
+        self.assert_command(p, "goal edit")
+        self.assertEqual(p["data"]["goal"]["name"], "MacBook")
+        self.assertEqual(p["data"]["goal"]["target"], 35000000)
+
+        p = self.ok("dash")
+        self.assertIn("goals", p["data"])
+        self.assertEqual(p["data"]["total_saved"], 8000000)
+
+        p = self.ok("goal", "rm", str(gid))
+        self.assert_command(p, "goal rm")
+        self.assertEqual(p["data"]["deleted"], gid)
+
 
 if __name__ == "__main__":
     unittest.main()

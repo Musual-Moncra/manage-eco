@@ -79,6 +79,33 @@ class FakeApi:
         if cmd == "goal":
             return {"target": params["target"], "by": params["by"], "needed": 26_285_000, "months_left": 2,
                     "per_month": 13_142_500}
+        if cmd == "goal list":
+            goals = getattr(self, "goals", [
+                {"id": 1, "name": "Laptop", "target": 30_000_000, "saved": 15_000_000,
+                 "by": "2027-12-31", "remaining": 15_000_000, "pct": 50.0, "per_month": 1_071_429,
+                 "days_left": 420, "on_track": True},
+                {"id": 2, "name": "Du lịch", "target": 10_000_000, "saved": 2_000_000,
+                 "by": "2027-06-30", "remaining": 8_000_000, "pct": 20.0, "per_month": 1_000_000,
+                 "days_left": 236, "on_track": True},
+            ])
+            tot = sum(g.get("saved", 0) for g in goals)
+            return {"goals": goals, "total_saved": tot, "balance": 23_715_000, "free_balance": 23_715_000 - tot}
+        if cmd == "goal save":
+            return {"goal": {"id": params["id"], "name": "Laptop", "saved": 20_000_000, "target": 30_000_000,
+                             "by": "2027-12-31"}, "saved_added": params["amount"], "total_saved": 20_000_000,
+                    "free_balance": 3_715_000}
+        if cmd == "goal take":
+            return {"goal": {"id": params["id"], "name": "Laptop", "saved": 10_000_000, "target": 30_000_000,
+                             "by": "2027-12-31"}, "taken": params["amount"], "total_saved": 10_000_000,
+                    "free_balance": 13_715_000}
+        if cmd == "goal add":
+            return {"goal": {"id": 3, "name": params.get("name", "Mục tiêu"), "target": params["target"],
+                             "by": params["by"], "saved": 0}}
+        if cmd == "goal edit":
+            return {"goal": {"id": params["id"], "name": params.get("name", "Mục tiêu"), "target": params["target"],
+                             "by": params["by"], "saved": 15_000_000}}
+        if cmd == "goal rm":
+            return {"deleted": params["id"], "goals": []}
         plans = PLANS + [DONE_PLAN] if params.get("all") else PLANS
         return {"dash": DASH, "list": {"transactions": TXS, "balance": 1}, "plan list": {"plans": plans},
                 "budget status": {"month": "2026-11", "budgets": DASH["budgets"]},
@@ -124,20 +151,25 @@ class FrameTest(unittest.TestCase):
     def test_wording_dong_tien(self):
         for tab in range(4):
             tui.switch_tab(self.state, tab, self.api)
-            out = text(frame(self.state))
+            out = text(frame(self.state, 100))
             self.assertNotIn("Dự định", out)
             self.assertIn("Dòng tiền", out)
         tui.dispatch(self.state, "p", self.api)
         self.assertIn("Thêm dòng tiền", text(frame(self.state)))
 
     def test_layout_rows(self):
-        out = text(frame(self.state)).splitlines()
+        out = text(frame(self.state, 100, 24)).splitlines()
         self.assertIn("Manage Eco", out[0])
         self.assertIn("Số dư 23.715.000 ₫", out[0])
         for name in tui.TABS:
             self.assertIn(name, out[1])
         self.assertIn("+ Chi", out[22])
         self.assertIn("Thoát", out[22])
+
+        out80 = text(frame(self.state, 80, 24)).splitlines()
+        self.assertIn("Tổng quan", out80[1])
+        self.assertIn("Giao", out80[1])
+        self.assertIn("Hũ", out80[1])
 
     def test_overview_content(self):
         out = text(frame(self.state))
@@ -152,7 +184,7 @@ class FrameTest(unittest.TestCase):
         for w in (80, 140):
             f = frame(self.state, w)
             tabs = sorted((x0, x1, a[1]) for r, x0, x1, a in f.hits if a[0] == "tab" and r == 1)
-            self.assertEqual([t[2] for t in tabs], [0, 1, 2, 3, 4])
+            self.assertEqual([t[2] for t in tabs], [0, 1, 2, 3, 4, 5])
             self.assertTrue(all(a[1] <= b[0] for a, b in zip(tabs, tabs[1:])), "tabs overlap")
             bar = {a[1] for r, x0, x1, a in f.hits if a[0] == "key" and r == 22}
             self.assertEqual(bar, {"a", "i", "p", "s", "q"})  # Tổng quan action bar
@@ -221,7 +253,6 @@ class ClickTest(unittest.TestCase):
         tui.dispatch(self.state, "enter", self.api)
         out = text(frame(self.state))
         self.assertIn("Số tiền không hợp lệ", out)
-        self.assertIn("Chọn hoặc gõ một danh mục", out)
         self.assertEqual(self.api.made("income"), [])
         self.assertEqual(self.state.form.focus, "amount")
         self.assertIn("lương", out)  # income categories offered
@@ -1144,9 +1175,74 @@ class UiOnlyTest(unittest.TestCase):
         click(self.state, ("key", "g"), self.api, 100, 30)  # edit: prefilled
         self.assertEqual(self.state.form.values, {"amount": "50.000.000", "by": "31/12/2026"})
 
+    def test_multiple_goal_jars_rendering(self):
+        self.state.goals = [
+            {"id": 1, "name": "Laptop", "target": 30_000_000, "saved": 15_000_000,
+             "by": "2027-12-31", "remaining": 15_000_000, "pct": 50.0, "per_month": 1_071_429,
+             "days_left": 420, "on_track": True},
+            {"id": 2, "name": "Du lịch", "target": 10_000_000, "saved": 2_000_000,
+             "by": "2027-06-30", "remaining": 8_000_000, "pct": 20.0, "per_month": 1_000_000,
+             "days_left": 236, "on_track": True},
+        ]
+        self.state.total_saved = 17_000_000
+        out = text(frame(self.state, 100, 30))
+        self.assertIn("Tiền tự do", out)
+        self.assertIn("Laptop", out)
+        self.assertIn("50%", out)
+        self.assertIn("Du lịch", out)
+        self.assertIn("20%", out)
+
+    def test_savings_jars_tab_and_take_form(self):
+        # Switch to Hũ tiết kiệm (tab 4, key '5')
+        tui.switch_tab(self.state, 4, self.api)
+        self.assertEqual(self.state.tab, 4)
+        out = text(frame(self.state, 100, 30))
+        self.assertIn("Hũ tiết kiệm", out)
+        self.assertIn("Tiền tự do", out)
+        self.assertIn("Laptop", out)
+        self.assertIn("+ Góp", out)
+        self.assertIn("- Rút", out)
+
+        # Open '- Rút' form for Laptop (id=1)
+        click(self.state, ("key", "goal_take:1"), self.api, 100, 30)
+        self.assertEqual(self.state.form.name, "goal_take")
+        self.assertEqual(self.state.form.edit_id, 1)
+
+        # Enter withdrawal amount and submit
+        click(self.state, ("chip", "amount", "1tr"), self.api, 100, 30)
+        click(self.state, ("key", "enter"), self.api, 100, 30)
+        self.assertEqual(self.api.made("goal take"), [{"id": 1, "amount": 1_000_000}])
+
+    def test_chart_milestones_and_quick_jump(self):
+        # Switch to Biểu đồ (tab 5, key '6')
+        tui.switch_tab(self.state, 5, self.api)
+        self.assertEqual(self.state.tab, 5)
+        out = text(frame(self.state, 100, 30))
+        # Milestone chips exist on chart
+        self.assertIn("Hôm nay", out)
+        self.assertIn("Cuối T", out)
+
+        # Clicking a milestone jump action sets the cursor
+        f = frame(self.state, 100, 30)
+        jump_actions = [a for *_, a in f.hits if a[0] == "chart_jump"]
+        self.assertTrue(len(jump_actions) >= 2, jump_actions)
+        target_idx = jump_actions[0][1]
+        click(self.state, jump_actions[0], self.api, 100, 30)
+        self.assertEqual(self.state.chart["cursor"], target_idx)
+
+        # Keyboard shortcuts: '[' / ']' for step 7 days, Home/End
+        tui.dispatch(self.state, "]", self.api)
+        self.assertEqual(self.state.chart["cursor"], target_idx + 7)
+        tui.dispatch(self.state, "[", self.api)
+        self.assertEqual(self.state.chart["cursor"], target_idx)
+        tui.dispatch(self.state, "0", self.api)
+        # 0 or Home jumps to today's index in series
+        n_hist = len((self.state.data.get(5) or {}).get("series") or [])
+        self.assertEqual(self.state.chart["cursor"], max(0, n_hist - 1))
+
     def test_every_size_still_exact(self):
         for w, h in ((40, 12), (50, 20), (80, 24), (170, 45)):
-            for tab in range(5):
+            for tab in range(6):
                 tui.switch_tab(self.state, tab, self.api)
                 f = frame(self.state, w, h)
                 self.assertEqual(len(f.lines), h)
@@ -1162,15 +1258,15 @@ class ChartTabTest(unittest.TestCase):
         self.api = FakeApi()
         self.state = tui.State(TODAY)
         tui.init(self.state, self.api)
-        tui.dispatch(self.state, "5", self.api)
+        tui.dispatch(self.state, "6", self.api)
 
     def test_loads_history_and_fills_rows(self):
-        self.assertEqual(self.state.tab, 4)
+        self.assertEqual(self.state.tab, 5)
         self.assertEqual(self.api.made("history")[-1], {"days": 90, "ahead": 30})
         for w, h in ((50, 20), (100, 30), (160, 45)):
             f = frame(self.state, w, h)
             plot = [r for r, x0, x1, a in f.hits if a == ("plot",)]
-            chips = {r for r, x0, x1, a in f.hits if a[0] == "chartset"}
+            chips = {r for r, x0, x1, a in f.hits if a[0] in ("chartset", "chart_jump")}
             self.assertEqual(len(plot) + len(chips), h - 4, (w, h))  # chips + chart use every body row
             self.assertTrue(all(cell_len(l.plain) == w for l in f.lines))
 
@@ -1215,10 +1311,10 @@ class ChartTabTest(unittest.TestCase):
 
     def test_overview_sparkline_opens_chart(self):
         tui.dispatch(self.state, "1", self.api)
-        click(self.state, ("tab", 4), self.api, 170, 40)  # the tab itself
+        click(self.state, ("tab", 5), self.api, 170, 40)  # the tab itself
         tui.dispatch(self.state, "1", self.api)
         f = frame(self.state, 170, 40)
-        spark = [r for r, x0, x1, a in f.hits if a == ("tab", 4) and r > 1]
+        spark = [r for r, x0, x1, a in f.hits if a == ("tab", 5) and r > 1]
         self.assertTrue(spark)  # the 30-day sparkline row links to Biểu đồ
 
 
@@ -1236,27 +1332,24 @@ class VfxTest(unittest.TestCase):
         self.state.now = 110.0  # bar fill done
         frame(self.state, 100, 30)
 
-    def test_ripple_and_press_lifecycle(self):
+    def test_click_has_no_visual_press_effect(self):
         tui.sfx.play.reset_mock()
-        click(self.state, ("key", "s"), self.api, 100, 30)
-        self.assertEqual(len(self.state.ripples), 1)
-        self.assertIsNotNone(self.state.press)
-        tui.sfx.play.assert_any_call("click", enabled=True)
-        self.assertTrue(self.state.animating())
-        self.state.now = 110.1
-        frame(self.state, 100, 30)
-        self.assertTrue(self.state.animating())
-        self.state.now = 111.0
-        frame(self.state, 100, 30)
-        self.assertEqual(self.state.ripples, [])
-        self.assertFalse(self.state.animating())
+        click(self.state, ("key", "s"), self.api, 100, 30)  # opens settings
+        tui.sfx.play.assert_any_call("click", enabled=True)  # the soft ping stays
+        self.assertFalse(self.state.animating())  # no ripple / press flash to wait for
+        self.assertFalse(hasattr(self.state, "ripples") or hasattr(self.state, "press"))
+        a = frame(self.state, 100, 30).lines
+        self.state.now += 0.05
+        b = frame(self.state, 100, 30).lines
+        self.assertEqual([(l.plain, [str(s.style) for s in l.spans]) for l in a],
+                         [(l.plain, [str(s.style) for s in l.spans]) for l in b])  # nothing changes over time
 
-    def test_loop_blocks_again_after_vfx(self):
+    def test_loop_stays_blocking_after_click(self):
         timeouts = []
-        times = iter([110.0, 110.0, 110.05, 110.05, 111.0, 111.0, 111.0, 111.0])
+        times = iter([110.0] * 8)
         f = frame(self.state, 100, 30)
         r, x0, x1, _ = next(h for h in f.hits if h[3] == ("key", "s"))
-        events = iter([("mouse", 0, x0 + 2, r + 1), "tick", "tick", "q"])
+        events = iter([("mouse", 0, x0 + 2, r + 1), "tick", "q"])
 
         def next_event(timeout):
             timeouts.append(timeout)
@@ -1266,9 +1359,7 @@ class VfxTest(unittest.TestCase):
             self.state.hits = tui.build_frame(self.state, 100, 30).hits
 
         tui.run_loop(self.state, next_event, draw, self.api, lambda: next(times))
-        self.assertEqual(timeouts[0], None)  # idle before the click
-        self.assertEqual(timeouts[1], tui.FRAME_S)  # ripple alive
-        self.assertEqual(timeouts[-1], None)  # everything finished: blocking read again
+        self.assertTrue(all(t is None for t in timeouts), timeouts)  # nothing animates on a click
 
     def test_tab_underline_slides(self):
         f = frame(self.state, 100, 30)
@@ -1287,13 +1378,12 @@ class VfxTest(unittest.TestCase):
         self.assertEqual(underline_start(), spans[3][0])
         self.assertTrue(spans[0][0] < mid < spans[3][0], (spans, mid))
 
-    def test_glow_on_new_selection(self):
+    def test_no_glow_on_new_selection(self):
         tui.dispatch(self.state, "2", self.api)
+        self.state.now = 112.0  # tab slide over
         tui.dispatch(self.state, "j", self.api)
-        self.assertIsNotNone(self.state.glow)
-        self.state.now = 110.1
-        frame(self.state, 100, 30)
-        self.assertTrue(self.state.animating())
+        self.assertFalse(self.state.animating())
+        self.assertFalse(hasattr(self.state, "glow"))
 
     def test_symbol_mode_safe_with_vfx_and_chart(self):
         chars = set()

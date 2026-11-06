@@ -36,9 +36,22 @@ def _bal(amount: int) -> str:
 def tx_table(txs: List[dict]) -> Table:
     t = _table("Giao dịch", "#", "Ngày", "Danh mục", "Số tiền", "Ghi chú", right=("#", "Số tiền"))
     for x in txs:
-        t.add_row(str(x["id"]), x["date"], x["category"], _signed(x["signed"]), "[%s]%s[/]" % (MUTED, x["note"]))
+        cat = x["category"] if x.get("category") else "[dim]Khác[/]"
+        t.add_row(str(x["id"]), x["date"], cat, _signed(x["signed"]), "[%s]%s[/]" % (MUTED, x["note"]))
     if not txs:
         t.add_row("", "", "[dim]chưa có giao dịch[/]", "", "")
+    return t
+
+
+def goal_table(goals: List[dict]) -> Table:
+    t = _table("Mục tiêu tiết kiệm", "#", "Tên", "Đã góp", "Mục tiêu", "Tiến độ", "Đến hạn", "Mỗi tháng",
+               right=("#", "Đã góp", "Mục tiêu", "Mỗi tháng"))
+    for g in goals:
+        bar = progress_bar(g["pct"])
+        t.add_row(str(g["id"]), g["name"], money(g["saved"]), money(g["target"]),
+                  "%s %3d%%" % (bar, round(g["pct"])), g["by"], money(g.get("per_month", 0)))
+    if not goals:
+        t.add_row("", "[dim]chưa có mục tiêu[/]", "", "", "", "", "")
     return t
 
 
@@ -167,6 +180,24 @@ def render(cmd: str, d: dict):
             "Mục tiêu [bold]%s[/] trước %s\nCòn thiếu [bold]%s[/] trong %d tháng\n→ cần để dành [bold %s]%s/tháng[/]"
             % (money(d["target"]), d["by"], money(d["needed"]), d["months_left"], INC, money(d["per_month"]))),
             title="Mục tiêu tiết kiệm", box=box.ROUNDED, border_style=ACCENT, expand=False)
+    if cmd == "goal add":
+        g = d["goal"]
+        return Text.from_markup("✓ Đã thêm mục tiêu #%d %s: %s trước %s" % (g["id"], g["name"], money(g["target"]), g["by"]))
+    if cmd == "goal list":
+        return Group(goal_table(d["goals"]), Text.from_markup("Tổng đã góp: %s · Tiền tự do: %s" % (_bal(d["total_saved"]), _bal(d["free_balance"]))))
+    if cmd == "goal save":
+        g = d["goal"]
+        return Text.from_markup("✓ Đã góp %s vào \"%s\" (đã có %s/%s, %d%%)"
+                                % (money(d["saved_added"]), g["name"], money(g["saved"]), money(g["target"]), round(g["pct"])))
+    if cmd == "goal take":
+        g = d["goal"]
+        return Text.from_markup("✓ Đã rút %s từ \"%s\" (còn %s/%s)"
+                                % (money(d["taken"]), g["name"], money(g["saved"]), money(g["target"])))
+    if cmd == "goal edit":
+        g = d["goal"]
+        return Text.from_markup("✓ Đã sửa mục tiêu #%d %s: %s trước %s" % (g["id"], g["name"], money(g["target"]), g["by"]))
+    if cmd in ("goal rm", "goal delete"):
+        return Text.from_markup("✓ Đã xoá mục tiêu #%d" % d["deleted"])
     if cmd == "dash":
         return dashboard(d)
     if cmd == "edit":

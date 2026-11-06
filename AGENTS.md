@@ -85,11 +85,13 @@ Error (exit 1 `not_found`, exit 2 `invalid`):
 
 ## Commands
 
-### `income` / `expense AMOUNT CATEGORY [-n NOTE] [-d DATE]`
+### `income` / `expense AMOUNT [CATEGORY] [-n NOTE] [-d DATE]`
 
 ```bash
 python3 -m manage_eco --json --db eco.db --today 2026-11-06 \
   income 20000000 salary -n luong -d 2026-11-01
+# Category is optional (defaults to empty string, grouped as "Khác"):
+python3 -m manage_eco --json --db eco.db --today 2026-11-06 expense 50k
 ```
 
 ```json
@@ -283,8 +285,9 @@ from the first transaction); `forecast` is one row per day after today (`ahead`
 default 90) and includes pending dòng tiền. Each `series` row has
 `{date,balance,income,expense}`; each `forecast` row has `{date,balance}`.
 
-### `goal TARGET --by DATE`
+### `goal TARGET --by DATE` / `goal <add|list|save|take|edit|rm>`
 
+Calculate required monthly savings:
 ```bash
 python3 -m manage_eco --json --db eco.db --today 2026-11-06 goal 10000000 --by 2027-02-06
 ```
@@ -295,6 +298,27 @@ python3 -m manage_eco --json --db eco.db --today 2026-11-06 goal 10000000 --by 2
 
 `needed = max(0, target - balance)`; `per_month` rounds up so the goal is
 reachable.
+
+Manage persistent savings jars ("hũ tiết kiệm"):
+```bash
+# Add goal
+python3 -m manage_eco --json --db eco.db goal add Laptop 30tr --by 2027-12-31
+
+# List goals
+python3 -m manage_eco --json --db eco.db goal list
+
+# Save (contribute) into jar
+python3 -m manage_eco --json --db eco.db goal save 1 5tr
+
+# Take (withdraw) from jar
+python3 -m manage_eco --json --db eco.db goal take 1 2tr
+
+# Edit goal
+python3 -m manage_eco --json --db eco.db goal edit 1 --target 35tr
+
+# Remove goal
+python3 -m manage_eco --json --db eco.db goal rm 1
+```
 
 ### `dash`
 

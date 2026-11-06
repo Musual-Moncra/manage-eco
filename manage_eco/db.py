@@ -4,7 +4,7 @@ import sqlite3
 from datetime import date
 from typing import List, Optional
 
-from manage_eco.models import Budget, Plan, Transaction, PENDING
+from manage_eco.models import Budget, Goal, Plan, Transaction, PENDING
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS transactions (
@@ -33,6 +33,13 @@ CREATE TABLE IF NOT EXISTS settings (
 CREATE TABLE IF NOT EXISTS budgets (
     category TEXT PRIMARY KEY,
     "limit" INTEGER NOT NULL CHECK ("limit" > 0)
+);
+CREATE TABLE IF NOT EXISTS goals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    target INTEGER NOT NULL CHECK (target > 0),
+    by_date TEXT NOT NULL,
+    saved INTEGER NOT NULL DEFAULT 0 CHECK (saved >= 0)
 );
 """
 
@@ -152,6 +159,45 @@ class Store:
     def list_budgets(self) -> List[Budget]:
         rows = self.conn.execute('SELECT category, "limit" FROM budgets ORDER BY category').fetchall()
         return [Budget(r["category"], r["limit"]) for r in rows]
+
+    # --- goals ---
+    def add_goal(self, g: Goal) -> int:
+        cur = self.conn.execute(
+            "INSERT INTO goals (name, target, by_date, saved) VALUES (?, ?, ?, ?)",
+            (g.name, g.target, g.by.isoformat(), g.saved),
+        )
+        self.conn.commit()
+        g.id = cur.lastrowid
+        return g.id
+
+    def list_goals(self) -> List[Goal]:
+        rows = self.conn.execute("SELECT * FROM goals ORDER BY by_date, id").fetchall()
+        return [
+            Goal(r["name"], r["target"], date.fromisoformat(r["by_date"]), r["saved"], r["id"])
+            for r in rows
+        ]
+
+    def get_goal(self, gid: int) -> Optional[Goal]:
+        r = self.conn.execute("SELECT * FROM goals WHERE id = ?", (gid,)).fetchone()
+        if r is None:
+            return None
+        return Goal(r["name"], r["target"], date.fromisoformat(r["by_date"]), r["saved"], r["id"])
+
+    def update_goal(self, g: Goal) -> None:
+        self.conn.execute(
+            "UPDATE goals SET name=?, target=?, by_date=?, saved=? WHERE id=?",
+            (g.name, g.target, g.by.isoformat(), g.saved, g.id),
+        )
+        self.conn.commit()
+
+    def delete_goal(self, gid: int) -> bool:
+        cur = self.conn.execute("DELETE FROM goals WHERE id = ?", (gid,))
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def total_saved(self) -> int:
+        row = self.conn.execute("SELECT COALESCE(SUM(saved), 0) AS total FROM goals").fetchone()
+        return int(row["total"]) if row else 0
 
     # --- settings ---
     def get_setting(self, key: str, default: Optional[str] = None) -> Optional[str]:

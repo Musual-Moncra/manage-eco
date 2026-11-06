@@ -373,6 +373,7 @@ def line_chart(
     *,
     cursor: Optional[int] = None,
     glyphs: str = "symbol",
+    goals: Sequence[Any] = (),
 ) -> Chart:
     """Render a Braille stock-style up/down line chart of daily balances and forecast."""
     width = max(1, int(width))
@@ -468,6 +469,16 @@ def line_chart(
         zero_py = val_to_py(0.0)
         zero_row = zero_py // 4
 
+    target_vals = []
+    for g in (goals or ()):
+        t = g.get("target") if isinstance(g, dict) else getattr(g, "target", None)
+        if t is not None:
+            target_vals.append(int(t))
+    target_rows = {}
+    for tv in target_vals:
+        if min_b <= tv <= max_b:
+            target_rows[val_to_py(float(tv)) // 4] = tv
+
     today_col: Optional[int] = None
     if hist_pts and fore_pts and n_pts > 1:
         today_col = int(round((len(hist_pts) - 1) * (plot_w - 1) / float(n_pts - 1)))
@@ -478,6 +489,7 @@ def line_chart(
 
     ticks = _price_ticks(min_b, max_b, plot_h)
     zero_ch = "-" if mode == "ascii" else "┈"
+    target_ch = "-" if mode == "ascii" else "┄"
     div_ch = "|" if mode == "ascii" else "┊"
     cross_ch = "|" if mode == "ascii" else "│"
 
@@ -504,6 +516,8 @@ def line_chart(
                 ln.append(div_ch, style=f"dim {AXIS_COLOR}")
             elif crosses_zero and r == zero_row:
                 ln.append(zero_ch, style=ZERO_LINE_COLOR)
+            elif r in target_rows:
+                ln.append(target_ch, style="dim #c4b5fd")
             else:
                 ln.append(" ")
 

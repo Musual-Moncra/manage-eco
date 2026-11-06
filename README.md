@@ -31,17 +31,17 @@ eco                    # mở giao diện (hoặc `eco ui`)
 
 Gõ `eco` để mở. Mọi thứ đều bấm được; phím tắt ghi sẵn trên từng nút.
 
-**5 tab**: `Tổng quan` · `Giao dịch` · `Dòng tiền` · `Ngân sách` · `Biểu đồ` — bấm để chuyển (phím `1`–`5`).
+**6 tab**: `Tổng quan` · `Giao dịch` · `Dòng tiền` · `Ngân sách` · `Hũ tiết kiệm` · `Biểu đồ` — bấm để chuyển (phím `1`–`6`).
 
 ### Tổng quan
 
 - Thẻ số dư, thu/chi tháng này, top 5 danh mục chi (thanh bar), cảnh báo dòng tiền quá hạn / nguy cơ âm tiền.
-- Thẻ **Mục tiêu**: bấm `✎` → nhập số tiền đích + chọn ngày bằng chip/lịch → xem mỗi tháng cần để dành bao nhiêu.
+- Thẻ **Hũ tiết kiệm**: tóm tắt nhanh tiến độ các hũ và "Tiền tự do = Số dư − Đã gom vào hũ", bấm `Xem hũ →` để sang tab Hũ tiết kiệm.
 - Sparkline số dư 30 ngày: bấm vào để mở tab **Biểu đồ**.
 
 ### Giao dịch (tab 2)
 
-- **Thêm**: bấm `+ Chi` (phím `a`) hoặc `+ Thu` (phím `i`). Nhập số tiền (bấm chip `50k`…`1tr` hoặc gõ biểu thức), chọn/gõ danh mục, ghi chú, rồi chọn ngày:
+- **Thêm**: bấm `+ Chi` (phím `a`) hoặc `+ Thu` (phím `i`). Nhập số tiền (bấm chip `50k`…`1tr` hoặc gõ biểu thức), danh mục (không bắt buộc, để trống hiển thị là "Khác"), ghi chú, rồi chọn ngày:
   - chip nhanh `[Hôm qua] [Hôm nay] [Mai] [Cuối tháng] [Đầu tháng sau]`;
   - hoặc bấm lịch tháng (‹ › đổi tháng, bấm ngày);
   - hoặc gõ `15/11`, `thứ 6`, `+7`…
@@ -67,12 +67,23 @@ Gõ `eco` để mở. Mọi thứ đều bấm được; phím tắt ghi sẵn t
 - **Xoá**: chọn dòng → `✕ Xoá` → xác nhận.
 - **Đổi tháng**: `‹ Tháng 11/2026 ›`. Thanh bar chuyển vàng khi ≥80%, đỏ khi ≥100%.
 
-### Biểu đồ (tab 5)
+### Hũ tiết kiệm (tab 5)
 
+- **Tổng quan hũ**: hiển thị rõ ràng `Số dư tổng`, `Đã gom vào các hũ` và `Tiền tự do khả dụng`.
+- **Quản lý hũ**: lưu nhiều hũ tích luỹ mục tiêu độc lập (Laptop, Du lịch, Quỹ khẩn cấp...).
+- **Góp tiền**: bấm `+ Góp` trên dòng hũ (hoặc thanh tác vụ) để nạp thêm tiền từ Tiền tự do vào hũ.
+- **Rút tiền**: bấm `- Rút` để rút tiền từ hũ trở lại Tiền tự do (không cho rút vượt quá số tiền hũ có).
+- **Thêm / Sửa / Xoá**: bấm `+ Tạo hũ` để tạo hũ mới, `✎ Sửa` để đổi tên/mục tiêu/hạn ngày, `✕ Xoá` để huỷ hũ.
+- **Tiến độ trực quan**: thanh %, số tiền cần góp mỗi tháng, đếm ngược ngày và trạng thái `✓ Kịp` / `⚠ Chậm` / `★ Đạt`.
+
+### Biểu đồ (tab 6)
+
+- **Thanh mốc dự báo nhanh**: hiển thị sẵn số dư dự báo tại các mốc `[Hôm nay]`, `[Cuối tháng này]`, `[Cuối tháng sau]`, `[Thấp nhất]`. Bấm vào mốc bất kỳ để con trỏ nhảy ngay đến ngày đó.
+- **Điều hướng nhanh**: phím `[` / `]` nhảy 7 ngày, `Home` hoặc `0` nhảy về Hôm nay, `End` hoặc `$` nhảy về cuối dự báo, `←` `→` đi từng ngày.
 - Chọn `[Line]` hoặc `[Nến]`; khoảng thời gian `[1T] [3T] [6T] [1N] [Tất cả]`; dự báo `[+0] [+30] [+90]`.
 - Chế độ Nến có thêm `[Ngày] [Tuần] [Tháng]`.
-- Di chuột/bấm vào đồ thị hoặc dùng `←` `→` để xem tooltip: `Thứ 6, 06/11 · 23.715.000 ₫ · +25tr / -1,3tr`.
-- Đường số dư tô xanh khi tăng, đỏ khi giảm; vạch "Hôm nay" chia quá khứ và dự báo; trục giá và trục ngày tự co theo bề rộng.
+- Tooltip trực quan theo vị trí con trỏ: ngày, số dư, biến động dự kiến.
+- Đường số dư tô xanh khi tăng, đỏ khi giảm; vạch "Hôm nay" chia quá khứ và dự báo; vẽ đường mục tiêu (nét đứt) tương ứng với các mục tiêu tiết kiệm.
 
 ### Cài đặt (nút `⚙`)
 
@@ -84,12 +95,14 @@ Gõ `eco` để mở. Mọi thứ đều bấm được; phím tắt ghi sẵn t
 
 | Phím | Việc | Phím | Việc |
 | :--- | :--- | :--- | :--- |
-| `1`–`5` | chuyển tab | `a` / `i` | thêm chi / thu |
+| `1`–`6` | chuyển tab | `a` / `i` | thêm chi / thu |
 | `p` | thêm dòng tiền | `e` | sửa mục đang chọn |
 | `d` | đánh dấu xong | `x` | xoá (có xác nhận) |
-| `m` | bật/tắt âm thanh | `←` `→` | di chuyển cursor biểu đồ |
-| `↑` `↓` | chọn dòng | `Enter` | lưu form |
-| `Esc` | huỷ / đóng | `q` | thoát |
+| `m` | bật/tắt âm thanh | `←` `→` | di chuyển cursor 1 ngày |
+| `[` `]` | nhảy lùi / tiến 7 ngày (biểu đồ) | `Home` / `0` | nhảy về Hôm nay (biểu đồ) |
+| `End` / `$` | nhảy về cuối dự báo (biểu đồ) | `↑` `↓` | chọn dòng danh sách |
+| `Enter` | lưu form | `Esc` | huỷ / đóng |
+| `q` | thoát | | |
 
 ---
 

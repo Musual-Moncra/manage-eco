@@ -22,7 +22,7 @@ from rich.cells import cell_len
 from rich.text import Text
 
 from manage_eco import fmt
-from manage_eco.fmt import money, parse_date, parse_money
+from manage_eco.fmt import money, parse_date, parse_money, progress_bar
 
 try:
     from manage_eco import anim
@@ -74,13 +74,13 @@ _PLAIN_FACES = {"success": "\\(^o^)/", "error": "(T_T)", "info": "(^_^)"}
 # icons: emoji = v5 set; symbol (default) = single-width BMP glyphs found in Menlo / SF Mono / DejaVu, no emoji;
 # off = no icons. "w" = cells reserved for a category icon. "toast" = faces passed to anim (None: anim's own).
 ICON_SETS = {
-    "emoji": {"tabs": ["🏠", "💸", "🔁", "🎯", "📈"], "settings": "⚙", "cancel": "⊘", "happy": "(◕‿◕)", "worried": "(・_・;)", "sad": "(｡•́︿•̀｡)",
+    "emoji": {"tabs": ["🏠", "💸", "🔁", "🎯", "🏺", "📈"], "settings": "⚙", "cancel": "⊘", "happy": "(◕‿◕)", "worried": "(・_・;)", "sad": "(｡•́︿•̀｡)",
               "sound_on": "🔊", "sound_off": "🔇", "warn": "⚠", "late": "⏰", "edit": "✎", "w": 2, "toast": None,
               "popup": "emoji"},
-    "symbol": {"tabs": ["⌂", "⇄", "↻", "◎", "⌁"], "settings": "⚙", "cancel": "⊘", "happy": "(^_^)", "worried": "(o_o;)", "sad": "(T_T)",
+    "symbol": {"tabs": ["⌂", "⇄", "↻", "◎", "◈", "⌁"], "settings": "⚙", "cancel": "⊘", "happy": "(^_^)", "worried": "(o_o;)", "sad": "(T_T)",
                "sound_on": "♪ bật", "sound_off": "♪ tắt", "warn": "▲", "late": "»", "edit": "✎", "w": 1,
                "toast": _PLAIN_FACES, "popup": "symbol"},
-    "off": {"tabs": ["", "", "", "", ""], "settings": "", "cancel": "", "happy": "(^_^)", "worried": "(o_o;)", "sad": "(T_T)",
+    "off": {"tabs": ["", "", "", "", "", ""], "settings": "", "cancel": "", "happy": "(^_^)", "worried": "(o_o;)", "sad": "(T_T)",
             "sound_on": "Âm: bật", "sound_off": "Âm: tắt", "warn": "!", "late": "!", "edit": "", "w": 0,
             "toast": _PLAIN_FACES, "popup": "symbol"},
 }
@@ -91,8 +91,8 @@ ASCII = False
 ICON_MODE = "symbol"
 G = dict(UNICODE_GLYPHS, **ICON_SETS["symbol"])  # current glyphs; see set_style()
 
-TABS = ["Tổng quan", "Giao dịch", "Dòng tiền", "Ngân sách", "Biểu đồ"]
-TABS_SHORT = ["Tổng", "Giao", "Dòng", "Ngân", "Biểu"]
+TABS = ["Tổng quan", "Giao dịch", "Dòng tiền", "Ngân sách", "Hũ tiết kiệm", "Biểu đồ"]
+TABS_SHORT = ["Tổng", "Giao", "Dòng", "Ngân", "Hũ", "Biểu"]
 CHART_RANGES = [("30", "1T"), ("90", "3T"), ("180", "6T"), ("365", "1N"), ("0", "Tất cả")]
 CHART_AHEAD = [("0", "+0"), ("30", "+30"), ("90", "+90")]
 CHART_MODES = [("line", "Line"), ("candle", "Nến")]
@@ -163,6 +163,14 @@ FORMS = {
     "budget_edit": ("Sửa ngân sách", [Field("amount", "Hạn mức / tháng", placeholder="vd: 3tr, 100k x 30")]),
     "goal": ("Mục tiêu tiết kiệm", [Field("amount", "Số tiền mục tiêu", placeholder="vd: 50tr"),
                                     Field("by", "Đạt trước ngày", placeholder="mặc định: 6 tháng nữa")]),
+    "goal_add": ("Thêm mục tiêu tiết kiệm", [Field("name", "Tên mục tiêu", placeholder="vd: Laptop, Du lịch"),
+                                             Field("amount", "Số tiền mục tiêu", placeholder="vd: 50tr"),
+                                             Field("by", "Đạt trước ngày", placeholder="vd: 31/12/2026")]),
+    "goal_edit": ("Sửa mục tiêu", [Field("name", "Tên mục tiêu"),
+                                   Field("amount", "Số tiền mục tiêu"),
+                                   Field("by", "Đạt trước ngày")]),
+    "goal_save": ("Góp vào mục tiêu", [Field("amount", "Số tiền góp", placeholder="vd: 500k, 1tr, 2tr")]),
+    "goal_take": ("Rút khỏi mục tiêu", [Field("amount", "Số tiền rút", placeholder="vd: 200k, 500k, 1tr")]),
     "plan": ("Thêm dòng tiền", [Field("name", "Tên", placeholder="vd: lương, thuê nhà"),
                                 _AMOUNT, _CATEGORY,
                                 Field("every", "Lặp", EVERY),
@@ -351,7 +359,9 @@ class Form:
 
     def chips(self, f: Field) -> List[Tuple[str, str]]:
         if f.key == "amount":
-            return {"budget": LIMIT_CHIPS, "budget_edit": LIMIT_CHIPS, "goal": GOAL_CHIPS}.get(self.name, AMOUNT_CHIPS)
+            return {"budget": LIMIT_CHIPS, "budget_edit": LIMIT_CHIPS, "goal": GOAL_CHIPS,
+                    "goal_add": GOAL_CHIPS, "goal_edit": GOAL_CHIPS,
+                    "goal_save": AMOUNT_CHIPS, "goal_take": AMOUNT_CHIPS}.get(self.name, AMOUNT_CHIPS)
         if f.key == "category":
             return [(c, c) for c in list(self.cats.get(self.kind(), []))[:8]]
         if f.key == "day":
@@ -401,17 +411,17 @@ class State:
         self.chart = {"days": 90, "ahead": 30, "mode": "line", "bucket": "week", "cursor": None}  # type: Dict[str, Any]
         self.chart_obj = None  # type: Any  # last rendered chart, for index_at()
         self.goal = None  # type: Optional[Dict[str, Any]]  # last savings goal (this session)
+        self.goals = []  # type: List[Dict[str, Any]]  # persistent savings jars (hũ tiết kiệm)
+        self.total_saved = 0
+        self.free_balance = None  # type: Optional[int]
         self.settings = False
         self.size = (80, 24)
-        # interaction VFX: (object, start) pairs
-        self.ripples = []  # type: List[Tuple[Any, float]]
-        self.press = None  # type: Optional[Tuple[Any, float, Tuple[int, int, int]]]
+        # interaction VFX: only the tab underline slide (click ripple/press/glow removed on request)
         self.slide = None  # type: Optional[Tuple[int, int, float]]  # (from tab, to tab, start)
-        self.glow = None  # type: Optional[Tuple[Any, float]]
 
     def items(self) -> List[Dict[str, Any]]:
         d = self.data.get(self.tab, {})
-        key = {1: "transactions", 2: "plans", 3: "budgets"}.get(self.tab)
+        key = {1: "transactions", 2: "plans", 3: "budgets", 4: "goals"}.get(self.tab)
         return (d.get(key) or []) if key else []
 
     def set_status(self, msg: str, ok: bool = True) -> None:
@@ -425,10 +435,7 @@ class State:
                     or (self.sparkle and t - self.sparkle[1] < SPARKLE_S)
                     or (self.count and t - self.count[2] < 0.6)
                     or (self.bars_t0 is not None and t - self.bars_t0 < 0.5)
-                    or any(t - t0 < _dur(r, 0.35) for r, t0 in self.ripples)
-                    or (self.press and t - self.press[1] < _dur(self.press[0], 0.12))
-                    or (self.slide and t - self.slide[2] < SLIDE_S)
-                    or (self.glow and t - self.glow[1] < _dur(self.glow[0], 0.4)))
+                    or (self.slide and t - self.slide[2] < SLIDE_S))
 
     def shown_balance(self) -> Optional[int]:
         if anim is not None and self.count and self.now - self.count[2] < 0.6:
@@ -460,6 +467,8 @@ def tab_request(state: State, tab: int) -> Tuple[str, Dict[str, Any]]:
     if tab == 3:
         return "budget status", ({"month": state.budget_month} if state.budget_month else {})
     if tab == 4:
+        return "goal list", {}
+    if tab == 5:
         return "history", {"days": state.chart["days"], "ahead": state.chart["ahead"]}
     return "dash", {}
 
@@ -476,8 +485,12 @@ def load(state: State, api: ApiCall) -> None:
         data = {}
     if state.tab == 1:
         data = dict(data, transactions=list(reversed(data.get("transactions") or [])))  # newest first
-    if state.tab == 0 and data:
-        state.dash = data
+    if state.tab in (0, 4) and data:
+        if state.tab == 0:
+            state.dash = data
+        state.goals = data.get("goals") or []
+        state.total_saved = data.get("total_saved", 0)
+        state.free_balance = data.get("free_balance", state.balance)
     state.data[state.tab] = data
     if "balance" in data:
         state.balance = data["balance"]
@@ -625,10 +638,11 @@ def category_icon(name: str, mode: Optional[str] = None) -> str:
 
 
 def cat_label(name: str) -> str:
+    display = name or "Khác"
     if not G["w"]:
-        return name
-    icon = category_icon(name)
-    return "%s%s %s" % (icon, " " * (G["w"] - cell_len(icon)), name)  # icons padded to the set's width
+        return display
+    icon = category_icon(name or "khac")
+    return "%s%s %s" % (icon, " " * (G["w"] - cell_len(icon)), display)  # icons padded to the set's width
 
 
 def date_chips(today: date) -> List[Tuple[str, str]]:
@@ -709,21 +723,29 @@ def header_line(state: State, width: int) -> Line:
 
 
 def tabs_line(active: int, width: int) -> Line:
-    def make(labels: List[str], icons: bool, caps: bool, gap: str = " ") -> Callable[[], Line]:
+    def make(labels: List[str], icons: bool, caps: bool, gap: str = " ", compact_pad: bool = False) -> Callable[[], Line]:
         def build() -> Line:
-            ln = Line().add(" ")
+            ln = Line().add(" " if not compact_pad else "")
             for i, name in enumerate(labels):
                 icon = G["tabs"][i] + " " if icons and G["tabs"][i] else ""
-                text = (" %s%s " % (icon, name)) if name or not icon else " %s" % icon
+                if compact_pad:
+                    text = (" %s%s" % (icon, name)) if name or not icon else icon
+                else:
+                    text = (" %s%s " % (icon, name)) if name or not icon else " %s" % icon
                 ln.pill([(text, TAB_ON if i == active else TAB_OFF)], ("tab", i),
                         ACCENT if i == active else "#2a2448", caps).add(gap)
             return ln
         return build
     n = len(TABS)
+    active_full = [TABS[i] if i == active else TABS_SHORT[i] for i in range(n)]
     icon_only = [TABS_SHORT[i] if i == active or not G["tabs"][i] else "" for i in range(n)]
     digits = [str(i + 1) for i in range(n)]
-    return fit([make(TABS, True, True), make(TABS, True, False), make(TABS_SHORT, True, True),
-                make(TABS_SHORT, True, False), make(icon_only, True, False),
+    return fit([make(TABS, True, True),
+                make(active_full, True, True),
+                make(TABS_SHORT, True, True),
+                make(TABS_SHORT, True, False),
+                make(icon_only, True, True),
+                make(icon_only, True, False),
                 make(digits, False, False, "")], width)
 
 
@@ -740,13 +762,19 @@ def action_line(state: State, width: int) -> Line:
     else:
         buttons = {1: [("+ Chi", "+Chi", "a", "a", False), ("+ Thu", "+Thu", "i", "i", False)],
                    2: [("+ Dòng tiền", "+Dòng", "p", "p", False)],
-                   3: [("+ Ngân sách", "+NS", "b", "b", False)]}.get(
+                   3: [("+ Ngân sách", "+NS", "b", "b", False)],
+                   4: [("+ Tạo hũ", "+Hũ", "goal_add", "+Hũ", False)]}.get(
             state.tab, [("+ Chi", "+Chi", "a", "a", False), ("+ Thu", "+Thu", "i", "i", False),
                         ("+ Dòng tiền", "+Dòng", "p", "p", False)])
         item = selected_item(state)
         if item is not None:
             pending = item.get("status", "pending") == "pending"
-            if state.tab in (1, 3) or pending:
+            if state.tab == 4:
+                buttons.append(("+ Góp", "+G", "goal_save:%d" % item["id"], "+G", False))
+                buttons.append(("- Rút", "-R", "goal_take:%d" % item["id"], "-R", False))
+                buttons.append((("%s Sửa" % G["edit"]).strip(), G["edit"] or "Sửa", "e", "e", False))
+                buttons.append(("%s Xoá" % G["del"], G["del"], "x", "x", False))
+            elif state.tab in (1, 3) or pending:
                 buttons.append((("%s Sửa" % G["edit"]).strip(), G["edit"] or "Sửa", "e", "e", False))
             if state.tab == 2 and pending:
                 buttons.append(("%s Xong" % G["done"], G["done"], "d", "d", False))
@@ -783,9 +811,9 @@ def budget_section(state: State, budgets: List[Dict[str, Any]], width: int, rows
     if not budgets:
         return out + [Line().add("   Chưa đặt ngân sách (eco budget set DANH_MỤC SỐ_TIỀN)", MUTED)]
     full = width >= 70
-    cat_w = 14 if width >= 56 else 11
-    money_w = 25 if full else 11
-    bar_w = max(4, min(30, width - 3 - cat_w - 1 - 6 - 2 - money_w))
+    cat_w = 26 if width >= 120 else 20 if width >= 90 else 16 if width >= 65 else 11
+    money_w = 30 if full else 11
+    bar_w = max(4, min(40 if width >= 100 else 30, width - 3 - cat_w - 1 - 6 - 2 - money_w))
     for b in sorted(budgets, key=lambda b: -float(b.get("pct", 0)))[:rows]:
         pct = float(b.get("pct", 0))
         spent, limit = b.get("spent", 0), b.get("limit", 0)
@@ -834,7 +862,7 @@ def sparkline_lines(d: Dict[str, Any], today: date, width: int) -> List[Line]:
     lo, hi = min(series), max(series)
     ticks = G["spark"]
     k = max(1, min(3, (width - 34) // len(series)))
-    ln = Line(("tab", 4)).add("   ")  # opens the Biểu đồ tab
+    ln = Line(("tab", 5)).add("   ")  # opens the Biểu đồ tab
     for v in series:
         level = 0 if hi == lo else int((v - lo) / (hi - lo) * (len(ticks) - 1))
         ln.add(ticks[level] * k, EXPENSE_C if v < 0 else INCOME_C)
@@ -850,12 +878,13 @@ def category_section(m: Dict[str, Any], width: int, rows: int) -> List[Line]:
         return out + [Line().add("   Chưa có khoản chi nào tháng này.", MUTED)]
     total = sum(c["amount"] for c in cats) or 1
     full = width >= 70
-    money_w = 15 if full else 7
-    bar_w = max(4, min(24, width - 3 - 14 - 1 - 6 - 2 - money_w))
+    cat_w = 26 if width >= 120 else 20 if width >= 90 else 16 if width >= 65 else 14
+    money_w = 18 if full else 7
+    bar_w = max(4, min(36 if width >= 100 else 24, width - 3 - cat_w - 1 - 6 - 2 - money_w))
     for c in cats[:rows]:
         pct = c["amount"] * 100.0 / total
         filled = int(round(pct / 100 * bar_w))
-        ln = Line(("tab", 1)).add("   ").cell(cat_label(c["category"]), 14).add(" ")
+        ln = Line(("tab", 1)).add("   ").cell(cat_label(c["category"]), cat_w).add(" ")
         ln.text.append_text(Text.assemble((G["full"] * filled, PINK), (G["empty"] * (bar_w - filled), RULE_C)))
         ln.cell("%d%%" % round(pct), 6, right=True).add("  ")
         ln.cell(money(c["amount"]) if full else short_money(c["amount"]), money_w, right=True)
@@ -876,6 +905,54 @@ def goal_line(state: State, width: int) -> Line:
             short_money(g["target"]), _vi_date(g["by"]), short_money(g.get("per_month", 0)), g.get("months_left", 0))
     ln.add(fit_money(text, max(10, width - 12)), ACCENT).add("  ")
     return ln.button(G["edit"] or "Sửa", "g", "g", short=G["edit"] or "Sửa")
+
+
+def goal_lines(state: State, width: int) -> List[Line]:
+    if not state.goals:
+        return [goal_line(state, width)]
+    lines = []
+    total_saved = state.total_saved
+    free_bal = (state.balance if state.balance is not None else 0) - total_saved
+    full = width >= 100
+    hdr = Line().add("   Tiền tự do: ", MUTED).add(money(free_bal) if full else short_money(free_bal), "bold " + INCOME_C)
+    if total_saved > 0:
+        hdr.add(" · Đã góp: ", MUTED).add(money(total_saved) if full else short_money(total_saved), ACCENT)
+    hdr.add("   ").click("Xem hũ →", ("tab", 4), BTN).add(" ").button("+ Mục tiêu", "goal_add", "+MT", short="+")
+    lines.append(hdr)
+
+    name_w = 28 if width >= 150 else 20 if width >= 115 else 14 if width >= 80 else 10
+    bar_w = 16 if width >= 150 else 10
+    use_full_money = width >= 160
+    for g in state.goals:
+        pct = g.get("pct", 0)
+        saved = g.get("saved", 0)
+        target = g.get("target", 0)
+        saved_str = ("%s / %s" % (money(saved), money(target))) if use_full_money else \
+                    ("%s/%s" % (short_money(saved), short_money(target)))
+        rem = g.get("remaining", 0)
+        per_m = g.get("per_month", 0)
+        days = g.get("days_left", 0)
+        track = ("%s Kịp" % G["ok"]) if g.get("on_track", True) else ("%s Chậm" % G["warn"])
+        track_c = INCOME_C if g.get("on_track", True) else WARN_C
+        ln = Line().add("   ◎ ", ACCENT).cell(g.get("name", "Mục tiêu"), name_w).add(" ")
+        ln.text.append_text(_bar(pct, bar_w))
+        ln.add(" %3d%%  " % round(pct), "bold " + ACCENT).add(saved_str, MUTED)
+        if width >= 150:
+            ln.add(" · thiếu %s · %s/tháng · %d ngày · " % (money(rem) if width >= 170 else short_money(rem),
+                                                            money(per_m) if width >= 170 else short_money(per_m),
+                                                            days), MUTED)
+            ln.add(track, track_c)
+        elif width >= 125:
+            ln.add(" · thiếu %s · %s/th · %d ngày · " % (short_money(rem), short_money(per_m), days), MUTED)
+            ln.add(track, track_c)
+        ln.add("  ")
+        ln.button("+ Góp", "goal_save:%d" % g["id"], "+G", short="+G")
+        ln.button("- Rút", "goal_take:%d" % g["id"], "-R", short="-R")
+        if width >= 100:
+            ln.button(G["edit"] or "✎", "goal_edit:%d" % g["id"], "e", short="✎")
+            ln.button(G["del"] or "✕", "goal_rm:%d" % g["id"], "x", short="✕")
+        lines.append(ln)
+    return lines
 
 
 def overview_lines(state: State, d: Dict[str, Any], width: int, height: int) -> List[Line]:
@@ -911,7 +988,10 @@ def overview_lines(state: State, d: Dict[str, Any], width: int, height: int) -> 
         tail.append(Line(("tab", 2)).add(fit_money(" %s Quá hạn: %s" % (G["late"], ", ".join(p["name"] for p in overdue)),
                                                    width),
                                          WARN_C))
-    tail.insert(0, goal_line(state, width))
+    for gl in reversed(goal_lines(state, width)):
+        tail.insert(0, gl)
+    if tail:
+        tail.insert(0, _rule(width))
     spark = sparkline_lines(d, state.today, width) if width >= 160 else []
     spare = height - len(out) - len(tail) - (len(spark) + 1 if spark else 0)
 
@@ -971,7 +1051,9 @@ def nav_line(state: State, key: str, month: Optional[str], all_chip: bool) -> Li
 
 def transactions_lines(state: State, width: int, height: int) -> List[Line]:
     compact, wide = width < 60, width >= 120
-    date_w, cat_w, amt_w = (5, 14, 14) if compact else (10, 18, 16)
+    date_w = 5 if compact else 10
+    cat_w = 26 if width >= 140 else 20 if width >= 100 else 18 if not compact else 14
+    amt_w = 18 if wide else 16 if not compact else 14
     extra = 13 if wide else 0  # "#id  Thu/Chi"
     note_w = 0 if compact else max(4, width - 1 - date_w - cat_w - amt_w - 6 - extra)
     if compact:
@@ -1000,8 +1082,8 @@ def transactions_lines(state: State, width: int, height: int) -> List[Line]:
 def plans_lines(state: State, width: int, height: int) -> List[Line]:
     compact, wide = width < 60, width >= 120
     date_w, amt_w = (5, 14) if compact else (10, 16)
-    rec_w = 0 if compact else 23
-    cat_w = 18 if wide else 0
+    rec_w = 0 if compact else (28 if width >= 140 else 23)
+    cat_w = (26 if width >= 140 else 18) if wide else 0
     name_w = max(4, width - 1 - date_w - amt_w - 4 - (rec_w + 2 if rec_w else 0) - (cat_w + 2 if cat_w else 0))
     today = state.today.isoformat()
 
@@ -1033,13 +1115,14 @@ def plans_lines(state: State, width: int, height: int) -> List[Line]:
 def budgets_lines(state: State, d: Dict[str, Any], width: int, height: int) -> List[Line]:
     nav = nav_line(state, "budget", state.budget_month or d.get("month"), False)
     full, wide = width >= 80, width >= 100
-    cat_w = 18 if width >= 60 else 12
-    money_w = 27 if full else 11
-    bar_w = max(4, min(40, width - 1 - cat_w - 2 - 6 - 2 - money_w - (16 if wide else 0)))
+    cat_w = 28 if width >= 140 else 22 if width >= 100 else 18 if width >= 60 else 12
+    money_w = 30 if full else 11
+    rem_w = 16 if wide else 0
+    bar_w = max(4, min(50 if width >= 140 else 40, width - 1 - cat_w - 2 - 6 - 2 - money_w - (rem_w + 2 if rem_w else 0)))
     head = (Line().add(" ").cell("Danh mục", cat_w, MUTED).add("  ").cell("Đã dùng", bar_w + 6, MUTED).add("  ")
             .cell("Đã chi / Hạn mức", money_w, MUTED, right=True))
     if wide:
-        head.add("  ").cell("Còn lại", 14, MUTED, right=True)
+        head.add("  ").cell("Còn lại", rem_w, MUTED, right=True)
 
     def row(b: Dict[str, Any]) -> Line:
         pct, rem = float(b.get("pct", 0)), b.get("remaining", 0)
@@ -1050,14 +1133,83 @@ def budgets_lines(state: State, d: Dict[str, Any], width: int, height: int) -> L
         ln.cell(("%s / %s" % (money(spent), money(limit))) if full else
                 "%s/%s" % (short_money(spent), short_money(limit)), money_w, right=True)
         if wide:
-            ln.add("  ").cell(money(rem), 14, EXPENSE_C if rem < 0 else "", right=True)
+            ln.add("  ").cell(money(rem), rem_w, EXPENSE_C if rem < 0 else "", right=True)
         return ln
     return [nav] + list_lines(state, state.items(), head, row, height - 1,
                               "Chưa đặt ngân sách. Nhấn [+ Ngân sách] để đặt hạn mức chi mỗi tháng.")
 
 
+def goal_tab_lines(state: State, width: int, height: int) -> List[Line]:
+    total_saved = state.total_saved
+    bal = state.balance if state.balance is not None else 0
+    free_bal = bal - total_saved
+    full = width >= 95
+    wide = width >= 135
+    vwide = width >= 160
+
+    hdr = Line().add(" ")
+    if width >= 95:
+        hdr.add("Số dư: ", MUTED).add(money(bal), "bold").add("  │  Đã vào hũ: ", MUTED)
+        hdr.add(money(total_saved), ACCENT).add("  │  Tiền tự do: ", MUTED)
+        hdr.add(money(free_bal), "bold " + INCOME_C).add("   ")
+    elif width >= 75:
+        hdr.add("Số dư: ", MUTED).add(short_money(bal), "bold").add("  │  Hũ: ", MUTED)
+        hdr.add(short_money(total_saved), ACCENT).add("  │  Tự do: ", MUTED)
+        hdr.add(short_money(free_bal), "bold " + INCOME_C).add("   ")
+    else:
+        hdr.add("Dư: ", MUTED).add(short_money(bal), "bold").add(" · Hũ: ", MUTED)
+        hdr.add(short_money(total_saved), ACCENT).add(" · Tự do: ", MUTED)
+        hdr.add(short_money(free_bal), "bold " + INCOME_C).add(" ")
+    hdr.button("+ Tạo hũ", "goal_add", "+Hũ", short="+Hũ")
+
+    name_w = 30 if vwide else 24 if wide else 18 if full else 12
+    money_w = 30 if full else 11
+    status_w = 28 if vwide else 18 if wide else 0
+    btn_w = 45 if wide else 27
+    bar_w = max(4, min(40 if vwide else 30, width - 1 - name_w - 2 - 6 - 2 - money_w - 2 - btn_w - (status_w + 2 if status_w else 0)))
+
+    head = Line().add(" ").cell("Hũ tiết kiệm", name_w, MUTED).add("  ").cell("Tiến độ", bar_w + 6, MUTED).add("  ")
+    head.cell("Đã gom / Mục tiêu" if full else "Đã gom/Đích", money_w, MUTED, right=True)
+    if status_w:
+        head.add("  ").cell("Kế hoạch / Hạn" if vwide else "Hạn/Tháng", status_w, MUTED)
+    head.add("  ").cell("Thao tác", btn_w, MUTED)
+
+    def row(g: Dict[str, Any]) -> Line:
+        pct = float(g.get("pct", 0))
+        saved = g.get("saved", 0)
+        target = g.get("target", 0)
+        rem = g.get("remaining", 0)
+        per_m = g.get("per_month", 0)
+        on_track = g.get("on_track", True)
+        done = rem <= 0
+
+        ln = Line().add(" ").cell(g.get("name", "Hũ"), name_w).add("  ")
+        ln.text.append_text(_bar(pct, bar_w, state.bar_pct(pct)))
+        ln.cell("%d%%" % round(pct), 6, right=True).add("  ")
+        amounts = ("%s / %s" % (money(saved), money(target))) if full else \
+                  "%s/%s" % (short_money(saved), short_money(target))
+        ln.cell(amounts, money_w, right=True)
+        if status_w:
+            if vwide:
+                status_txt = "★ Đã đạt mục tiêu" if done else ("%s/tháng · %s" % (money(per_m), "✓ Kịp" if on_track else "▲ Chậm"))
+            else:
+                status_txt = "★ Đạt" if done else ("%s/th %s" % (short_money(per_m), "✓" if on_track else "▲"))
+            status_style = ("bold " + INCOME_C) if done else (INCOME_C if on_track else WARN_C)
+            ln.add("  ").cell(status_txt, status_w, status_style)
+        ln.add("  ")
+        ln.button("+ Góp", "goal_save:%d" % g["id"], "+G", short="+G")
+        ln.button("- Rút", "goal_take:%d" % g["id"], "-R", short="-R")
+        if wide:
+            ln.button(G["edit"] or "✎", "goal_edit:%d" % g["id"], "e", short="✎")
+            ln.button(G["del"] or "✕", "goal_rm:%d" % g["id"], "x", short="✕")
+        return ln
+
+    return [hdr] + list_lines(state, state.items(), head, row, height - 1,
+                              "Chưa có hũ tiết kiệm. Nhấn [+ Tạo hũ] để bắt đầu tích luỹ.")
+
+
 def chart_chip_lines(state: State, width: int) -> List[Line]:
-    """Range / forecast / mode (/ bucket) chips, wrapping chip by chip."""
+    """Range / forecast / mode (/ bucket) chips, wrapping group by group."""
     c = state.chart
     groups = [("Khoảng", "days", CHART_RANGES, str(c["days"])), ("Dự báo", "ahead", CHART_AHEAD, str(c["ahead"])),
               ("Kiểu", "mode", CHART_MODES, c["mode"])]
@@ -1065,7 +1217,8 @@ def chart_chip_lines(state: State, width: int) -> List[Line]:
         groups.append(("Nến", "bucket", CHART_BUCKETS, c["bucket"]))
     lines, ln = [], Line().add(" ")  # type: List[Line], Line
     for title, key, chips, cur in groups:
-        if ln.x > 1 and ln.x + cell_len(title) + 2 + cell_len(chips[0][1]) + 3 > width:
+        group_w = cell_len(title) + 2 + sum(cell_len(lbl) + 3 for _, lbl in chips)
+        if ln.x > 1 and ln.x + group_w > width:
             lines.append(ln)
             ln = Line().add(" ")
         ln.add(title + ": ", MUTED)
@@ -1078,8 +1231,91 @@ def chart_chip_lines(state: State, width: int) -> List[Line]:
     return lines + [ln]
 
 
+def get_chart_milestones(state: State) -> List[Tuple[str, str, str, int, Optional[str]]]:
+    """Return list of (wide_label, full_label, short_label, data_index, diff_str) for chart milestones."""
+    d = state.data.get(5) or {}
+    series = d.get("series") or []
+    forecast = d.get("forecast") or []
+    all_pts = series + forecast
+    if not all_pts:
+        return []
+
+    n_hist = len(series)
+    today_idx = max(0, n_hist - 1)
+    today_bal = int(all_pts[today_idx]["balance"])
+
+    milestones = []
+    # 1. Hôm nay
+    milestones.append(("Hôm nay: %s" % money(today_bal), "Hôm nay: %s" % short_money(today_bal), "Hôm nay", today_idx, None))
+
+    date_to_idx = {str(pt["date"]): i for i, pt in enumerate(all_pts)}
+    today = state.today
+
+    # 2. Cuối tháng này
+    last_day_this_month = calendar.monthrange(today.year, today.month)[1]
+    eom_this = date(today.year, today.month, last_day_this_month).isoformat()
+    if eom_this in date_to_idx:
+        idx = date_to_idx[eom_this]
+        bal = int(all_pts[idx]["balance"])
+        diff = bal - today_bal
+        diff_str = "%s%s" % ("▲+" if diff >= 0 else "▼-", short_money(abs(diff)))
+        diff_full = "%s%s" % ("▲+" if diff >= 0 else "▼-", money(abs(diff)))
+        milestones.append(("Cuối T%02d: %s (%s)" % (today.month, money(bal), diff_full),
+                           "Cuối T%02d: %s (%s)" % (today.month, short_money(bal), diff_str),
+                           "Cuối T%02d" % today.month, idx, diff_str))
+
+    # 3. Cuối tháng sau
+    next_y = today.year + (1 if today.month == 12 else 0)
+    next_m = 1 if today.month == 12 else today.month + 1
+    last_day_next_month = calendar.monthrange(next_y, next_m)[1]
+    eom_next = date(next_y, next_m, last_day_next_month).isoformat()
+    if eom_next in date_to_idx:
+        idx = date_to_idx[eom_next]
+        bal = int(all_pts[idx]["balance"])
+        diff = bal - today_bal
+        diff_str = "%s%s" % ("▲+" if diff >= 0 else "▼-", short_money(abs(diff)))
+        diff_full = "%s%s" % ("▲+" if diff >= 0 else "▼-", money(abs(diff)))
+        milestones.append(("Cuối T%02d: %s (%s)" % (next_m, money(bal), diff_full),
+                           "Cuối T%02d: %s (%s)" % (next_m, short_money(bal), diff_str),
+                           "Cuối T%02d" % next_m, idx, diff_str))
+
+    # 4. Thấp nhất trong dự báo
+    if forecast:
+        fore_min_idx = min(range(n_hist, len(all_pts)), key=lambda i: int(all_pts[i]["balance"]))
+        min_pt = all_pts[fore_min_idx]
+        min_bal = int(min_pt["balance"])
+        d_parts = str(min_pt["date"]).split("-")
+        ddmm = "%s/%s" % (d_parts[2], d_parts[1]) if len(d_parts) == 3 else str(min_pt["date"])
+        milestones.append(("Thấp nhất: %s (%s)" % (money(min_bal), ddmm),
+                           "Thấp nhất: %s (%s)" % (short_money(min_bal), ddmm),
+                           "Thấp: %s" % short_money(min_bal), fore_min_idx, None))
+
+    return milestones
+
+
+def chart_milestone_lines(state: State, width: int, max_lines: int = 1) -> List[Line]:
+    milestones = get_chart_milestones(state)
+    if not milestones:
+        return []
+    cur = state.chart.get("cursor")
+    lines = []
+    ln = Line().add(" ").add("Mốc: ", MUTED)
+    for wide_lbl, full_lbl, short_lbl, idx, diff in milestones:
+        lbl = wide_lbl if width >= 140 else full_lbl if width >= 80 else short_lbl
+        w = cell_len(lbl) + 3
+        if ln.x > 1 and ln.x + w > width:
+            if len(lines) + 1 >= max_lines:
+                break
+            lines.append(ln)
+            ln = Line().add("   ")
+        is_active = (cur == idx)
+        style = CHIP_ON if is_active else CHIP
+        ln.click(" %s " % lbl, ("chart_jump", idx), style).add(" ")
+    return lines + [ln]
+
+
 def _chart_count(state: State) -> int:
-    d = state.data.get(4) or {}
+    d = state.data.get(5) or {}
     if state.chart["mode"] == "candle" and chart_mod is not None and hasattr(chart_mod, "ohlc"):
         try:
             return len(chart_mod.ohlc(d.get("series") or [], state.chart["bucket"]))
@@ -1089,9 +1325,13 @@ def _chart_count(state: State) -> int:
 
 
 def chart_lines(state: State, width: int, height: int) -> List[Line]:
-    """Biểu đồ tab: chips, then a stock-style chart (chart.py) filling every remaining row."""
-    out = chart_chip_lines(state, width)
-    d = state.data.get(4) or {}
+    """Biểu đồ tab: chips, milestones, then a stock-style chart (chart.py) filling every remaining row."""
+    chips = chart_chip_lines(state, width)
+    room = max(0, height - len(chips) - 3)
+    max_ms = 1 if room < 8 or width < 60 else 2
+    ms = chart_milestone_lines(state, width, max_lines=max_ms) if room >= 1 else []
+    out = chips + ms
+    d = state.data.get(5) or {}
     series, forecast = d.get("series") or [], d.get("forecast") or []
     plot_h = max(3, height - len(out))
     c, cur = state.chart, state.chart["cursor"]
@@ -1102,7 +1342,8 @@ def chart_lines(state: State, width: int, height: int) -> List[Line]:
                 chart = chart_mod.candle_chart(series, width, plot_h, bucket=c["bucket"], cursor=cur,
                                                glyphs=G["popup"])
             else:
-                chart = chart_mod.line_chart(series, forecast, width, plot_h, cursor=cur, glyphs=G["popup"])
+                chart = chart_mod.line_chart(series, forecast, width, plot_h, cursor=cur, glyphs=G["popup"],
+                                              goals=state.goals)
         except Exception as e:  # a broken chart must not break the app
             state.set_status("Lỗi biểu đồ: %s" % e, False)
     state.chart_obj = chart
@@ -1266,6 +1507,8 @@ def body_lines(state: State, width: int, height: int) -> List[Line]:
         return plans_lines(state, width, height)
     if state.tab == 3:
         return budgets_lines(state, d, width, height)
+    if state.tab == 4:
+        return goal_tab_lines(state, width, height)
     return chart_lines(state, width, height)
 
 
@@ -1390,7 +1633,7 @@ def _anim_attr(name: str) -> Any:
 
 
 def apply_vfx(state: State, lines: List[Text], hits: List[Hit], width: int) -> None:
-    """Restyle in place (never moves anything): tab underline (sliding), pressed button, row glow."""
+    """Restyle in place (never moves anything): the tab underline (sliding)."""
     t = state.now
     tabs = {a[1]: (x0, x1) for r, x0, x1, a in hits if r == 1 and a[0] == "tab"}
     if state.tab in tabs and len(lines) > 1:
@@ -1400,31 +1643,6 @@ def apply_vfx(state: State, lines: List[Text], hits: List[Hit], width: int) -> N
             fx0, fx1 = tabs[state.slide[0]]
             x0, x1 = slide(fx0, x0, t - state.slide[2], SLIDE_S), slide(fx1, x1, t - state.slide[2], SLIDE_S)
         _stylize_cells(lines[1], x0, x1, "underline")
-    if state.press:
-        press, t0, (row, x0, x1) = state.press
-        active = getattr(press, "active", None)
-        if (active(t - t0) if active else t - t0 < 0.12) and row < len(lines):
-            _stylize_cells(lines[row], x0, x1, "reverse")
-    if state.glow and state.selected is not None and t - state.glow[1] < _dur(state.glow[0], 0.4):
-        row = next((r for r, x0, x1, a in hits if a == ("select", state.selected)), None)
-        if row is not None:
-            idx = _cell_index(lines[row])
-            for col in range(min(width, len(idx))):
-                style = state.glow[0].style_at(col, t - state.glow[1])
-                if style:
-                    lines[row].stylize(style, idx[col], idx[col] + 1)
-
-
-def draw_ripples(state: State, lines: List[Text], width: int, height: int) -> None:
-    alive = []
-    for ripple, t0 in state.ripples:
-        if state.now - t0 >= _dur(ripple, 0.35):
-            continue
-        alive.append((ripple, t0))
-        for row, col, ch, style in ripple.cells(state.now - t0):
-            if 0 <= row < height and 0 <= col < width and cell_len(ch) == 1:
-                lines[row] = put(lines[row], col, Text(ch, style=style))
-    state.ripples = alive
 
 
 def build_frame(state: State, width: int, height: int) -> Frame:
@@ -1444,7 +1662,6 @@ def build_frame(state: State, width: int, height: int) -> Frame:
     state.size = (width, height)
     apply_vfx(state, lines, spans + row_hits, width)
     hits = apply_overlays(state, lines, spans + row_hits, width, height)
-    draw_ripples(state, lines, width, height)
     return Frame(lines, hits)
 
 
@@ -1467,8 +1684,10 @@ def validate(form: Form, today: date) -> Tuple[str, Dict[str, Any], Dict[str, st
     if "category" in v:
         if v["category"]:
             params["category"] = v["category"]
-        else:
+        elif form.name in ("budget", "plan"):
             errors["category"] = "Chọn hoặc gõ một danh mục"
+        else:
+            params["category"] = ""
     if "day" in visible and v["day"]:
         if form.day():
             params["day"] = form.day()
@@ -1492,6 +1711,14 @@ def validate(form: Form, today: date) -> Tuple[str, Dict[str, Any], Dict[str, st
         return "budget set", {"category": category, "amount": params.get("amount")}, errors
     if form.name == "goal":
         return "goal", {"target": params.get("amount"), "by": params.get("by")}, errors
+    if form.name == "goal_add":
+        return "goal add", {"name": v.get("name") or "Mục tiêu", "target": params.get("amount"), "by": params.get("by")}, errors
+    if form.name == "goal_edit":
+        return "goal edit", {"id": form.edit_id, "name": v.get("name") or "Mục tiêu", "target": params.get("amount"), "by": params.get("by")}, errors
+    if form.name == "goal_save":
+        return "goal save", {"id": form.edit_id, "amount": params.get("amount")}, errors
+    if form.name == "goal_take":
+        return "goal take", {"id": form.edit_id, "amount": params.get("amount")}, errors
     params["note"] = v["note"]
     if form.name == "tx":
         params.update(id=form.edit_id, kind=v["kind"])
@@ -1556,6 +1783,9 @@ def open_edit(state: State, api: ApiCall) -> None:
     item = selected_item(state)
     if item is None:
         return
+    if state.tab == 4:
+        open_goal_edit(state, item["id"], api)
+        return
     if state.tab == 3:
         form = open_form(state, "budget_edit", api)
         form.values["amount"] = _amount_text(item["limit"])
@@ -1583,6 +1813,50 @@ def open_goal(state: State, api: ApiCall) -> None:
     form = open_form(state, "goal", api)
     if state.goal:
         form.values.update(amount=_amount_text(state.goal["target"]), by=_dmy(date.fromisoformat(state.goal["by"])))
+
+
+def open_goal_add(state: State, api: ApiCall) -> None:
+    open_form(state, "goal_add", api)
+
+
+def open_goal_save(state: State, gid: int, api: ApiCall) -> None:
+    goals = state.goals or state.items()
+    g = next((x for x in goals if x.get("id") == gid), None)
+    form = open_form(state, "goal_save", api)
+    form.edit_id = gid
+    if g:
+        form.title = "Góp vào hũ %s (có %s / cần %s)" % (
+            g.get("name", ""), short_money(g.get("saved", 0)), short_money(g.get("target", 0)))
+
+
+def open_goal_take(state: State, gid: int, api: ApiCall) -> None:
+    goals = state.goals or state.items()
+    g = next((x for x in goals if x.get("id") == gid), None)
+    form = open_form(state, "goal_take", api)
+    form.edit_id = gid
+    if g:
+        form.title = "Rút từ hũ %s (có %s)" % (g.get("name", ""), short_money(g.get("saved", 0)))
+
+
+def open_goal_edit(state: State, gid: int, api: ApiCall) -> None:
+    goals = state.goals or state.items()
+    g = next((x for x in goals if x.get("id") == gid), None)
+    form = open_form(state, "goal_edit", api)
+    form.edit_id = gid
+    if g:
+        form.title = "Sửa mục tiêu: %s" % g.get("name", "")
+        by_d = date.fromisoformat(g["by"]) if isinstance(g.get("by"), str) else g.get("by")
+        form.values.update(name=g.get("name", ""),
+                           amount=_amount_text(g.get("target", 0)),
+                           by=_dmy(by_d) if by_d else "")
+
+
+def confirm_goal_rm(state: State, gid: int, api: ApiCall) -> None:
+    goals = state.goals or state.items()
+    g = next((x for x in goals if x.get("id") == gid), None)
+    name = g.get("name", "") if g else ("#%d" % gid)
+    ask(state, "Xoá", "mục tiêu %s" % name, name, "goal rm", {"id": gid},
+        ("Đã xoá mục tiêu %s" % name, "delete", "trash", "Đã xoá", name, "info", False))
 
 
 def set_icon_mode(state: State, api: ApiCall, mode: str) -> None:
@@ -1634,6 +1908,25 @@ def submit(state: State, api: ApiCall) -> None:
         celebrate(state, api, "Đã đặt mục tiêu %s %s trước %s: %s" % (
             G["ok"], short_money(params["target"]), _vi_date(params["by"]), sub), "save", "check", "Đã đặt mục tiêu!", sub)
         state.goal = dict(result, target=params["target"], by=params["by"])
+        return
+    if cmd == "goal save":
+        g = result.get("goal") or {}
+        added = short_money(result.get("saved_added", 0))
+        name = g.get("name", "")
+        celebrate(state, api, "Đã góp %s vào %s" % (added, name), "save", "coin", "Đã góp!", "%s (+%s)" % (name, added))
+        return
+    if cmd == "goal take":
+        g = result.get("goal") or {}
+        taken = short_money(result.get("taken", 0))
+        name = g.get("name", "")
+        celebrate(state, api, "Đã rút %s từ %s" % (taken, name), "save", "coin", "Đã rút!", "%s (-%s)" % (name, taken))
+        return
+    if cmd in ("goal add", "goal edit"):
+        g = result.get("goal") or {}
+        name = g.get("name", "")
+        verb = "Đã sửa" if cmd == "goal edit" else "Đã thêm"
+        icon = "pencil" if cmd == "goal edit" else "check"
+        celebrate(state, api, "%s mục tiêu %s" % (verb, name), "save", icon, verb + "!", name)
         return
     income = params.get("income") or params.get("kind") == "income" or cmd == "income"
     amount = money(params["amount"] if income else -params["amount"], signed=True)
@@ -1698,14 +1991,7 @@ def switch_tab(state: State, tab: int, api: ApiCall) -> None:
 
 
 def select_row(state: State, index: Optional[int]) -> None:
-    """Change the selected row; a new selection gets a glow sweep."""
-    if index is not None and index != state.selected:
-        glow = _anim_attr("Glow")
-        if glow is not None:
-            try:
-                state.glow = (glow(state.size[0]), state.now)
-            except Exception:
-                state.glow = None
+    """Change the selected row (no glow sweep: click effects were removed on request)."""
     state.selected = index
 
 
@@ -1730,7 +2016,7 @@ def chart_set(state: State, api: ApiCall, key: str, value: str) -> None:
     state.chart[key] = int(value) if key in ("days", "ahead") else value
     state.chart["cursor"] = None
     if key in ("days", "ahead"):
-        state.data.pop(4, None)
+        state.data.pop(5, None)
         load(state, api)
 
 
@@ -1771,8 +2057,18 @@ def handle_key(state: State, key: str, api: ApiCall) -> None:
         switch_tab(state, int(key) - 1, api)
     elif key == "tab":
         switch_tab(state, (state.tab + 1) % len(TABS), api)
-    elif state.tab == 4 and key in ("left", "right", "h", "l"):
+    elif state.tab == 5 and key in ("left", "right", "h", "l"):
         move_cursor(state, -1 if key in ("left", "h") else 1)
+    elif state.tab == 5 and key in ("[", "{"):
+        move_cursor(state, -7)
+    elif state.tab == 5 and key in ("]", "}"):
+        move_cursor(state, 7)
+    elif state.tab == 5 and key in ("0", "home"):
+        n_hist = len((state.data.get(5) or {}).get("series") or [])
+        state.chart["cursor"] = max(0, n_hist - 1)
+    elif state.tab == 5 and key in ("$", "end"):
+        n = _chart_count(state)
+        state.chart["cursor"] = max(0, n - 1)
     elif key in ("j", "down") and items:
         select_row(state, 0 if state.selected is None else min(state.selected + 1, len(items) - 1))
     elif key in ("k", "up") and items:
@@ -1787,7 +2083,25 @@ def handle_key(state: State, key: str, api: ApiCall) -> None:
     elif key == "b":
         open_form(state, "budget", api)
     elif key == "g":
-        open_goal(state, api)
+        if state.tab == 4:
+            open_goal_add(state, api)
+        else:
+            open_goal(state, api)
+    elif key == "goal_add":
+        open_goal_add(state, api)
+    elif key.startswith("goal_save:"):
+        open_goal_save(state, int(key.split(":")[1]), api)
+    elif key.startswith("goal_take:"):
+        open_goal_take(state, int(key.split(":")[1]), api)
+    elif key.startswith("goal_edit:"):
+        open_goal_edit(state, int(key.split(":")[1]), api)
+    elif key.startswith("goal_rm:"):
+        confirm_goal_rm(state, int(key.split(":")[1]), api)
+    elif key == "e" and state.tab == 4 and state.selected is not None:
+        open_goal_edit(state, items[state.selected]["id"], api)
+    elif key == "x" and state.tab == 4 and state.selected is not None:
+        confirm_goal_rm(state, items[state.selected]["id"], api)
+        confirm_goal_rm(state, int(key.split(":")[1]), api)
     elif key == "c" and state.tab == 2 and state.selected is not None:
         p = items[state.selected]
         if p.get("status", "pending") == "pending":
@@ -1829,7 +2143,7 @@ def handle_key(state: State, key: str, api: ApiCall) -> None:
              "info", False))
 
 
-_CLICK_SOUND = ("key", "chip", "cal", "month", "plans", "chartset", "set")
+_CLICK_SOUND = ("key", "chip", "cal", "month", "plans", "chartset", "chart_jump", "set")
 
 
 def handle_click(state: State, x: int, y: int, api: ApiCall) -> None:
@@ -1839,11 +2153,8 @@ def handle_click(state: State, x: int, y: int, api: ApiCall) -> None:
         return
     action = hit[3]
     kind = action[0]
-    if kind in _CLICK_SOUND:  # soft ping + pressed look for buttons and chips
+    if kind in _CLICK_SOUND:  # soft ping for buttons and chips (no visual press effect)
         play(state, "click")
-        press = _anim_attr("Press")
-        if press is not None:
-            state.press = (press(), state.now, (hit[0], hit[1], hit[2]))
     if kind == "tab":
         switch_tab(state, action[1], api)
     elif kind == "key":
@@ -1862,6 +2173,8 @@ def handle_click(state: State, x: int, y: int, api: ApiCall) -> None:
         change_view(state, api, 2)
     elif kind == "chartset":
         chart_set(state, api, action[1], action[2])
+    elif kind == "chart_jump":
+        state.chart["cursor"] = action[1]
     elif kind == "plot" and state.chart_obj is not None:
         index = state.chart_obj.index_at(x - 1)
         if index is not None:
@@ -1880,7 +2193,8 @@ def handle_click(state: State, x: int, y: int, api: ApiCall) -> None:
         if key == "day" and form.edit_id is not None:
             form.values["due"] = ""  # editing: let the api move the due date to the new day
         # jump to the next required field still empty, so "click category, type amount, Enter" works
-        form.focus = next((f.key for f in form.visible() if f.key in REQUIRED and not form.values[f.key]), key)
+        req = ("amount",) if form.name in ("income", "expense", "tx") else REQUIRED
+        form.focus = next((f.key for f in form.visible() if f.key in req and not form.values[f.key]), key)
     elif kind == "cal" and state.form:
         form, key = state.form, action[1]
         dv = form.date_value(key) or form.today
@@ -1896,23 +2210,11 @@ def dispatch(state: State, event: Event, api: ApiCall) -> None:
     if popup_active(state):  # any input dismisses the popup; clicks only dismiss, keys still act
         state.popup = state.toast = state.sparkle = None
         if isinstance(event, tuple):
-            ripple = _anim_attr("Ripple")
-            if ripple is not None and (event[1] & ~0b11100) == 0:
-                try:
-                    state.ripples.append((ripple(event[3] - 1, event[2] - 1, glyphs=G["popup"]), state.now))
-                except TypeError:
-                    pass
             return
     if isinstance(event, tuple):
         _, b, x, y = event
         b &= ~0b11100  # drop shift/meta/ctrl bits
         if b == 0:
-            ripple = _anim_attr("Ripple")
-            if ripple is not None:  # a ring at every click point
-                try:
-                    state.ripples.append((ripple(y - 1, x - 1, glyphs=G["popup"]), state.now))
-                except TypeError:
-                    state.ripples.append((ripple(y - 1, x - 1), state.now))
             handle_click(state, x, y, api)
         elif b in (64, 65) and not state.form and not state.confirm:
             handle_key(state, "up" if b == 64 else "down", api)

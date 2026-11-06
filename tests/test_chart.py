@@ -187,6 +187,16 @@ class ChartTest(unittest.TestCase):
         hdr_normal = line_chart(s_normal, [], 80, 12).lines[0].plain
         self.assertIn("▲ +5tr (+50.0%)", hdr_normal)
 
+    def test_target_line_with_goals(self):
+        series = [
+            {"date": "2026-11-01", "balance": 10_000_000, "income": 10_000_000, "expense": 0},
+            {"date": "2026-11-02", "balance": 20_000_000, "income": 10_000_000, "expense": 0},
+        ]
+        goals = [{"target": 15_000_000, "name": "Laptop"}]
+        c = line_chart(series, [], 80, 15, goals=goals)
+        chart_text = "\n".join(ln.plain for ln in c.lines)
+        self.assertTrue("┄" in chart_text or "-" in chart_text)
+
 
 if __name__ == "__main__":
     unittest.main()

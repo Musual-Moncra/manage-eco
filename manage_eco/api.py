@@ -13,7 +13,7 @@ from typing import Any, Callable, Dict, Optional
 from manage_eco import cashflow, plans
 from manage_eco.fmt import parse_date, parse_money
 from manage_eco.models import (
-    DAILY, EXPENSE, INCOME, MONTHLY, ONCE, PENDING, WEEKLY, Budget, Plan, Transaction,
+    DAILY, EXPENSE, INCOME, MONTHLY, ONCE, PENDING, WEEKLY, Budget, Goal, Plan, Transaction,
 )
 
 RECURRENCES = (ONCE, DAILY, WEEKLY, MONTHLY)
@@ -64,9 +64,10 @@ def _require(params: dict, *keys: str) -> None:
 
 
 def _record(kind: str, params: dict, store, today: date) -> dict:
-    _require(params, "amount", "category")
+    _require(params, "amount")
+    cat = str(params.get("category") or "").strip()
     t = Transaction(_date(params.get("date"), today), _amount(params["amount"]), kind,
-                    str(params["category"]), str(params.get("note") or ""))
+                    cat, str(params.get("note") or ""))
     store.add_transaction(t)
     return {"transaction": tx_dict(t), "balance": store.balance()}
 
@@ -117,8 +118,8 @@ def edit(params, store, today):
         raise LookupError("không tìm thấy giao dịch #%d" % tid)
     if _given(params, "amount"):
         t.amount = _amount(params["amount"])
-    if _given(params, "category"):
-        t.category = str(params["category"])
+    if "category" in params and params["category"] is not None:
+        t.category = str(params["category"]).strip()
     if params.get("note") is not None:
         t.note = str(params["note"])
     if _given(params, "date"):
@@ -317,14 +318,93 @@ def goal(params, store, today):
     return dict(g, target=target, by=by.isoformat())
 
 
+def goal_add(params, store, today):
+    _require(params, "name", "target", "by")
+    target = _amount(params["target"])
+    by = _date(params["by"], today)
+    saved = _amount(params["saved"]) if params.get("saved") not in (None, "", "0", 0) else 0
+    g = Goal(str(params["name"]).strip(), target, by, saved)
+    store.add_goal(g)
+    return {"goal": plans.goal_dict(g, store, today)}
+
+
+def goal_list(params, store, today):
+    goals = [plans.goal_dict(g, store, today) for g in store.list_goals()] if hasattr(store, "list_goals") else []
+    total_saved = store.total_saved() if hasattr(store, "total_saved") else 0
+    bal = store.balance(today)
+    return {"goals": goals, "total_saved": total_saved, "balance": bal, "free_balance": bal - total_saved}
+
+
+def goal_save(params, store, today):
+    _require(params, "id", "amount")
+    gid = int(params["id"])
+    g = store.get_goal(gid)
+    if g is None:
+        raise LookupError("không tìm thấy mục tiêu #%d" % gid)
+    amt = _amount(params["amount"])
+    g.saved += amt
+    store.update_goal(g)
+    total_saved = store.total_saved()
+    return {"goal": plans.goal_dict(g, store, today), "saved_added": amt,
+            "total_saved": total_saved, "free_balance": store.balance(today) - total_saved}
+
+
+def goal_take(params, store, today):
+    _require(params, "id", "amount")
+    gid = int(params["id"])
+    g = store.get_goal(gid)
+    if g is None:
+        raise LookupError("không tìm thấy mục tiêu #%d" % gid)
+    amt = _amount(params["amount"])
+    if amt > g.saved:
+        raise ValueError("số tiền rút (%d) lớn hơn số đã góp (%d)" % (amt, g.saved))
+    g.saved -= amt
+    store.update_goal(g)
+    total_saved = store.total_saved()
+    return {"goal": plans.goal_dict(g, store, today), "taken": amt,
+            "total_saved": total_saved, "free_balance": store.balance(today) - total_saved}
+
+
+def goal_edit(params, store, today):
+    _require(params, "id")
+    gid = int(params["id"])
+    g = store.get_goal(gid)
+    if g is None:
+        raise LookupError("không tìm thấy mục tiêu #%d" % gid)
+    if _given(params, "name"):
+        g.name = str(params["name"]).strip()
+    if _given(params, "target"):
+        g.target = _amount(params["target"])
+    if _given(params, "by"):
+        g.by = _date(params["by"], today)
+    if _given(params, "saved"):
+        g.saved = _amount(params["saved"]) if params["saved"] not in ("0", 0) else 0
+    store.update_goal(g)
+    return {"goal": plans.goal_dict(g, store, today)}
+
+
+def goal_rm(params, store, today):
+    _require(params, "id")
+    gid = int(params["id"])
+    if not store.delete_goal(gid):
+        raise LookupError("không tìm thấy mục tiêu #%d" % gid)
+    return {"deleted": gid, "total_saved": store.total_saved() if hasattr(store, "total_saved") else 0}
+
+
 def dash(params, store, today):
     month = summary({}, store, today)
+    goals = [plans.goal_dict(g, store, today) for g in store.list_goals()] if hasattr(store, "list_goals") else []
+    total_saved = store.total_saved() if hasattr(store, "total_saved") else 0
+    bal = store.balance(today)
     return {
         "today": today.isoformat(),
-        "balance": store.balance(today),
+        "balance": bal,
+        "total_saved": total_saved,
+        "free_balance": bal - total_saved,
         "month": month,
         "overdue": [plan_dict(p) for p in plans.overdue(store, today)],
         "budgets": plans.budget_status(store, today.year, today.month),
+        "goals": goals,
         "upcoming": _rows(cashflow.forecast(store, today, 30)),
         "lowest": _lowest(cashflow.forecast(store, today, 90)),
     }
@@ -334,11 +414,14 @@ def categories(params, store, today):
     """Categories by use count (most used first), split by kind — for pick lists in UIs."""
     counts = {INCOME: {}, EXPENSE: {}}  # type: Dict[str, Dict[str, int]]
     for t in store.list_transactions():
-        counts[t.kind][t.category] = counts[t.kind].get(t.category, 0) + 1
+        if t.category:
+            counts[t.kind][t.category] = counts[t.kind].get(t.category, 0) + 1
     for p in store.list_plans(status=None):
-        counts[p.kind].setdefault(p.category, 0)
+        if p.category:
+            counts[p.kind].setdefault(p.category, 0)
     for b in store.list_budgets():
-        counts[EXPENSE].setdefault(b.category, 0)
+        if b.category:
+            counts[EXPENSE].setdefault(b.category, 0)
     rank = lambda c: [k for k, _ in sorted(c.items(), key=lambda kv: (-kv[1], kv[0]))]
     return {"expense": rank(counts[EXPENSE]), "income": rank(counts[INCOME])}
 
@@ -373,7 +456,10 @@ COMMANDS = {
     "edit": edit, "plan edit": plan_edit,
     "budget set": budget_set, "budget status": budget_status, "budget delete": budget_delete,
     "history": history,
-    "forecast": forecast, "goal": goal, "dash": dash, "categories": categories, "sound": sound, "icons": icons,
+    "forecast": forecast, "goal": goal,
+    "goal add": goal_add, "goal list": goal_list, "goal save": goal_save, "goal take": goal_take,
+    "goal edit": goal_edit, "goal rm": goal_rm, "goal delete": goal_rm,
+    "dash": dash, "categories": categories, "sound": sound, "icons": icons,
 }  # type: Dict[str, Callable[[dict, Any, date], dict]]
 
 

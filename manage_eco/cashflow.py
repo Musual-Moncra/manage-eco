@@ -23,11 +23,12 @@ def summary(store, start: date, end: date) -> Dict[str, int]:
 
 
 def by_category(store, start: date, end: date, kind: str = EXPENSE) -> List[Tuple[str, int]]:
-    """Totals per category, largest first (ties by name)."""
+    """Totals per category, largest first (ties by name). Empty category groups as 'Khác'."""
     totals = defaultdict(int)  # type: Dict[str, int]
     for t in store.list_transactions(start, end):
         if t.kind == kind:
-            totals[t.category] += t.amount
+            cat = t.category if t.category else "Khác"
+            totals[cat] += t.amount
     return sorted(totals.items(), key=lambda kv: (-kv[1], kv[0]))
 
 

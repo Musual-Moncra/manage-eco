@@ -1,7 +1,7 @@
 """Plan lifecycle, budgets and savings goals."""
 import calendar
 from datetime import date, timedelta
-from typing import List
+from typing import List, Optional
 
 from manage_eco.models import (
     CANCELLED,
@@ -100,3 +100,47 @@ def savings_goal(store, target: int, by: date, today: date) -> dict:
     months_left = max(1, (by.year - today.year) * 12 + (by.month - today.month))
     per_month = (needed + months_left - 1) // months_left
     return {"needed": needed, "months_left": months_left, "per_month": per_month}
+
+
+def goal_dict(g, store=None, today: Optional[date] = None) -> dict:
+    target = getattr(g, "target", 0) if not isinstance(g, dict) else g.get("target", 0)
+    saved = getattr(g, "saved", 0) if not isinstance(g, dict) else g.get("saved", 0)
+    name = getattr(g, "name", "") if not isinstance(g, dict) else g.get("name", "")
+    gid = getattr(g, "id", None) if not isinstance(g, dict) else g.get("id")
+    by_val = getattr(g, "by", today or date.today()) if not isinstance(g, dict) else g.get("by")
+    by_date = by_val if isinstance(by_val, date) else date.fromisoformat(str(by_val))
+
+    rem = max(0, target - saved)
+    pct = round(saved / target * 100.0, 1) if target > 0 else 100.0
+    res = {
+        "id": gid,
+        "name": name,
+        "target": target,
+        "saved": saved,
+        "by": by_date.isoformat(),
+        "remaining": rem,
+        "pct": pct,
+    }
+    if today is not None:
+        days_left = (by_date - today).days
+        months_left = max(1, (by_date.year - today.year) * 12 + (by_date.month - today.month))
+        per_month = (rem + months_left - 1) // months_left if rem > 0 else 0
+        res["days_left"] = max(0, days_left)
+        res["months_left"] = months_left
+        res["per_month"] = per_month
+        if rem <= 0:
+            res["on_track"] = True
+        elif days_left < 0:
+            res["on_track"] = False
+        elif store is not None:
+            from manage_eco import cashflow
+            days = max(1, days_left)
+            fc = cashflow.forecast(store, today, days)
+            bal_at_by = fc[-1][3] if fc else store.balance(today)
+            total_saved = store.total_saved() if hasattr(store, "total_saved") else 0
+            other_saved = max(0, total_saved - saved)
+            free_at_by = bal_at_by - other_saved
+            res["on_track"] = free_at_by >= rem
+        else:
+            res["on_track"] = True
+    return res

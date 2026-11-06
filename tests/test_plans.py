@@ -13,10 +13,11 @@ from manage_eco.models import (
     PENDING,
     WEEKLY,
     Budget,
+    Goal,
     Plan,
     Transaction,
 )
-from manage_eco.plans import budget_status, cancel_plan, complete_plan, overdue, savings_goal
+from manage_eco.plans import budget_status, cancel_plan, complete_plan, goal_dict, overdue, savings_goal
 
 
 def make_plan(**kwargs):
@@ -270,6 +271,44 @@ class SavingsGoalTest(unittest.TestCase):
         result = savings_goal(self.store, 5_000_000, date(2026, 6, 1), date(2026, 1, 15))
 
         self.assertEqual(result["needed"], 4_000_000)
+
+
+class GoalJarsTest(unittest.TestCase):
+    def setUp(self):
+        self.store = Store(":memory:")
+        self.addCleanup(self.store.close)
+
+    def test_store_crud(self):
+        g = Goal("Laptop", 30_000_000, date(2027, 12, 31), 5_000_000)
+        gid = self.store.add_goal(g)
+        self.assertIsNotNone(gid)
+        self.assertEqual(self.store.total_saved(), 5_000_000)
+
+        fetched = self.store.get_goal(gid)
+        self.assertIsNotNone(fetched)
+        self.assertEqual(fetched.name, "Laptop")
+        self.assertEqual(fetched.saved, 5_000_000)
+
+        fetched.saved = 10_000_000
+        self.store.update_goal(fetched)
+        self.assertEqual(self.store.total_saved(), 10_000_000)
+
+        goals = self.store.list_goals()
+        self.assertEqual(len(goals), 1)
+
+        deleted = self.store.delete_goal(gid)
+        self.assertTrue(deleted)
+        self.assertEqual(self.store.total_saved(), 0)
+
+    def test_goal_dict_calculations(self):
+        g = Goal("Xe", 50_000_000, date(2027, 1, 1), 20_000_000, id=1)
+        today = date(2026, 11, 1)
+        d = goal_dict(g, self.store, today)
+        self.assertEqual(d["remaining"], 30_000_000)
+        self.assertEqual(d["pct"], 40.0)
+        self.assertEqual(d["months_left"], 2)
+        self.assertEqual(d["per_month"], 15_000_000)
+        self.assertEqual(d["days_left"], 61)
 
 
 if __name__ == "__main__":
