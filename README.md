@@ -17,11 +17,16 @@
 
 ## Cài đặt
 
-Yêu cầu **Python 3.9+**. Cài đặt ở chế độ editable:
+Yêu cầu **Python 3.9+**.
 
 ```bash
-pip install -e .
+./scripts/install.sh   # tạo lệnh `eco` trong ~/.local/bin (chạy thẳng từ thư mục repo)
+eco                    # mở ngay giao diện TUI
 ```
+
+Hoặc dùng pip (pip ≥ 21.3): `pip install -e .`
+
+Gõ `eco` không kèm lệnh con sẽ mở TUI; khi output không phải terminal (pipe, script) hoặc có `--json`, `eco` trả về `dash`.
 
 ---
 

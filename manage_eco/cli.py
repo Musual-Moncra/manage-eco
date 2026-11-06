@@ -18,7 +18,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true", help="xuất JSON cho script/AI agent")
     p.add_argument("--db", help="đường dẫn file dữ liệu (mặc định $ECO_DB hoặc ~/.manage_eco.db)")
     p.add_argument("--today", help="ghi đè ngày hôm nay (YYYY-MM-DD)")
-    sub = p.add_subparsers(dest="cmd", required=True)
+    sub = p.add_subparsers(dest="cmd")
 
     for name, help_ in (("income", "ghi khoản thu"), ("expense", "ghi khoản chi")):
         s = sub.add_parser(name, help=help_)
@@ -81,6 +81,8 @@ def main(argv: Optional[List[str]] = None, store: Optional[Store] = None,
          console=None, today: Optional[date] = None) -> int:
     args = build_parser().parse_args(argv)
     as_json = args.json or os.environ.get("ECO_JSON") == "1"
+    if args.cmd is None:  # bare `eco`: open the TUI, or the dashboard when scripted
+        args.cmd = "dash" if as_json or not sys.stdout.isatty() else "ui"
     cmd = args.cmd + (" " + args.sub if getattr(args, "sub", None) else "")
     params = {k: v for k, v in vars(args).items() if k not in _GLOBAL}
 
