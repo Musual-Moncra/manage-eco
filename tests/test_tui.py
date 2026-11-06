@@ -1,3 +1,4 @@
+import re
 import unittest
 from datetime import date
 from unittest import mock
@@ -490,6 +491,75 @@ class ResponsiveTest(unittest.TestCase):
                     self.assertNotIn(glyph, text(f))
         finally:
             tui.use_ascii(False)
+
+
+class NarrowMoneyTest(unittest.TestCase):
+    """At narrow widths a line may shorten its amounts, but never crop one."""
+    LONG = "Tiền thuê nhà chung cư cao cấp tháng mười một"
+
+    def setUp(self):
+        self.api = FakeApi()
+        self.dash = dict(DASH, lowest={"date": "2027-01-11", "balance": -30_285_000},
+                         overdue=[{"name": self.LONG, "due_date": "2026-11-01"}])
+        self.patch = mock.patch.dict(DASH, self.dash)
+        self.patch.start()
+        self.state = tui.State(TODAY)
+        self.state.now = 1000.0
+        tui.init(self.state, self.api)
+
+    def tearDown(self):
+        self.patch.stop()
+
+    def assert_no_cut_money(self, f, what):
+        for line in f.lines:
+            plain = line.plain
+            for m in re.finditer(r"[+-]?\d{1,3}(?:\.\d{3})+", plain):
+                self.assertTrue(plain[m.end():].startswith(" ₫"), (what, plain))
+
+    def screens(self, w, h):
+        for tab in range(4):
+            tui.switch_tab(self.state, tab, self.api)
+            yield "tab%d" % tab, frame(self.state, w, h)
+        tui.switch_tab(self.state, 1, self.api)
+        self.state.selected = 0
+        tui.handle_key(self.state, "x", self.api)
+        yield "confirm", frame(self.state, w, h)
+        tui.handle_key(self.state, "n", self.api)
+        tui.handle_key(self.state, "p", self.api)
+        for ch in self.LONG:
+            tui.dispatch(self.state, ch, self.api)
+        tui.dispatch(self.state, "tab", self.api)
+        for ch in "5tr":
+            tui.dispatch(self.state, ch, self.api)
+        tui.dispatch(self.state, "tab", self.api)
+        for ch in "nhà":
+            tui.dispatch(self.state, ch, self.api)
+        tui.dispatch(self.state, "enter", self.api)
+        self.state.now += 0.5  # toast fully popped in
+        yield "after save (status + toast)", frame(self.state, w, h)
+
+    def test_no_line_drops_its_money_at_50_and_60(self):
+        for w in (50, 60):
+            self.state.status = ("", True)
+            for what, f in self.screens(w, 24):
+                self.assert_no_cut_money(f, (w, what))
+                for line in f.lines:
+                    self.assertEqual(cell_len(line.plain), w)
+
+    def test_short_warning_and_status_keep_amount(self):
+        for w in (50, 60):
+            tui.switch_tab(self.state, 0, self.api)
+            out = text(frame(self.state, w, 24))
+            self.assertIn("Âm tiền 11/01: -30,3tr", out)
+        f = dict(self.screens(50, 24))["after save (status + toast)"]
+        status = f.lines[-1].plain.rstrip()
+        self.assertTrue(status.endswith("-5tr"), status)
+        if tui.anim is not None:
+            toast = next(l.plain for l in f.lines[:-2] if "Đã lưu" in l.plain)
+            self.assertIn("-5tr", toast)
+
+    def test_wide_keeps_full_warning(self):
+        self.assertIn("Sẽ âm tiền ngày 11/01/2027 (thấp nhất -30.285.000 ₫)", text(frame(self.state, 100, 30)))
 
 
 @unittest.skipIf(tui.anim is None, "anim.py not available")

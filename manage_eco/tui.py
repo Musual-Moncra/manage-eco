@@ -9,6 +9,7 @@ animating the loop blocks on input: idle means zero redraws.
 """
 import calendar
 import os
+import re
 import select
 import signal
 import sys
@@ -451,6 +452,29 @@ def short_money(v: int) -> str:
     return "%s%dđ" % (sign, a)
 
 
+MONEY_RE = re.compile(r"([+-]?)(\d{1,3}(?:\.\d{3})*) ₫")
+
+
+def fit_money(s: str, width: int) -> str:
+    """Make a line fit in `width` cells without losing its last amount: full text, then short
+    amounts (-30,3tr), then an ellipsis in the text before the last amount."""
+    if cell_len(s) <= width:
+        return s
+    s = MONEY_RE.sub(lambda m: short_money(int(m.group(1) + m.group(2).replace(".", ""))), s)
+    if cell_len(s) <= width:
+        return s
+    last = None
+    for last in re.finditer(r"[+-]?\d[\d,]*\s?(?:tỷ|tr|k|đ)", s):
+        pass
+    start = len(s)  # no amount: plain ellipsis at the end
+    if last:
+        start = last.start() - (1 if last.start() and s[last.start() - 1] == " " else 0)
+    tail = s[start:]
+    head = Text(s[:start])
+    head.truncate(max(0, width - cell_len(tail)), overflow="ellipsis")
+    return head.plain + tail
+
+
 def _plain(s: str) -> str:
     s = unicodedata.normalize("NFD", s.lower().replace("đ", "d"))
     return "".join(c for c in s if not unicodedata.combining(c))
@@ -569,24 +593,28 @@ def action_line(state: State, width: int) -> Line:
         buttons += [(snd, snd, "m", "m", False), ("Thoát", "Thoát", "q", "q", False)]
         prefix = ""
 
-    def make(mode: str, caps: bool, with_prefix: bool = True) -> Callable[[], Line]:
+    short_prefix = "Xoá #%s %s? " % (state.confirm["id"], state.confirm["short"]) if state.confirm else ""
+
+    def make(mode: str, caps: bool, pre: str) -> Callable[[], Line]:
         def build() -> Line:
             ln = Line().add(" ")
-            if prefix and with_prefix:
-                ln.add(prefix, "bold " + EXPENSE_C)
+            if pre:
+                ln.add(pre, "bold " + EXPENSE_C)
             for label, short, key, hint, primary in buttons:
                 ln.button(label, key, hint, primary, mode, caps, short)
             return ln
         return build
-    return fit([make("full", True), make("full", False), make("short", True), make("short", False),
-                make("key", False), make("key", False, False)], width)
+    modes = [("full", True), ("full", False), ("short", True), ("short", False), ("key", False)]
+    return fit([make(m, c, prefix) for m, c in modes] + [make(m, c, short_prefix) for m, c in modes]
+               + [make("key", False, "")], width)
 
 
-def status_line(state: State) -> Line:
+def status_line(state: State, width: int) -> Line:
     msg, ok = state.status
     if not msg:
         return Line().add(" Nhấp chuột vào nút, hoặc bấm phím ghi trên nút.", MUTED)
-    return Line().add(" %s %s" % (G["ok"] if ok else G["err"], msg), "bold " + (INCOME_C if ok else EXPENSE_C))
+    return Line().add(fit_money(" %s %s" % (G["ok"] if ok else G["err"], msg), width),
+                      "bold " + (INCOME_C if ok else EXPENSE_C))
 
 
 def budget_section(state: State, budgets: List[Dict[str, Any]], width: int, rows: int) -> List[Line]:
@@ -674,13 +702,17 @@ def overview_lines(state: State, d: Dict[str, Any], width: int, height: int) -> 
     tail = []  # type: List[Line]
     low = d.get("lowest")
     if low and low.get("balance", 0) < 0:
-        tail.append(Line(("tab", 2)).add(" %s Sẽ âm tiền ngày %s (thấp nhất %s)" % (
-            G["warn"], _vi_date(low["date"]), money(low["balance"])), "bold " + EXPENSE_C))
+        if width >= 80:
+            warn = " %s Sẽ âm tiền ngày %s (thấp nhất %s)" % (G["warn"], _vi_date(low["date"]), money(low["balance"]))
+        else:
+            warn = " %s Âm tiền %s: %s" % (G["warn"], _vi_date(low["date"], short=True), short_money(low["balance"]))
+        tail.append(Line(("tab", 2)).add(fit_money(warn, width), "bold " + EXPENSE_C))
     else:
         tail.append(Line().add(" %s Số dư không bị âm trong 90 ngày tới." % G["ok"], INCOME_C))
     overdue = d.get("overdue") or []
     if overdue:
-        tail.append(Line(("tab", 2)).add(" %s Quá hạn: %s" % (G["late"], ", ".join(p["name"] for p in overdue)),
+        tail.append(Line(("tab", 2)).add(fit_money(" %s Quá hạn: %s" % (G["late"], ", ".join(p["name"] for p in overdue)),
+                                                   width),
                                          WARN_C))
     spark = sparkline_lines(d, state.today, width) if width >= 160 else []
     spare = height - len(out) - len(tail) - (len(spark) + 1 if spark else 0)
@@ -950,7 +982,14 @@ def apply_overlays(state: State, lines: List[Text], hits: List[Hit], width: int,
     if not state.toast:
         return hits
     t = state.now - state.toast[1]
-    box = state.toast[0].lines(t, max(4, min(52, width - 2)))
+    box_w = max(4, min(52, width - 2))
+    toast_ = state.toast[0]
+    # inner width minus the kaomoji and the pop-in padding; shorten so the amount is never cut off
+    kao = toast_._kaomoji(anim.ascii_mode()) if hasattr(toast_, "_kaomoji") else ""
+    room = box_w - 4 - (cell_len(kao) + 2 if kao else 0) - 2
+    if cell_len(toast_.message) > room:
+        toast_ = anim.Toast(fit_money(toast_.message, room), toast_.kind, toast_.icon, toast_.duration)
+    box = toast_.lines(t, box_w)
     top = height - 2 - len(box)
     if not box or top < 2:
         return hits
@@ -966,7 +1005,9 @@ def apply_overlays(state: State, lines: List[Text], hits: List[Hit], width: int,
             if 2 <= row < height - 2 and 0 <= col < width and not inside:
                 lines[row] = put(lines[row], col, Text(ch, style=style))
     for i, b in enumerate(box):
-        lines[top + i] = put(lines[top + i], x0, b)
+        left = 1 if x0 > 0 else 0  # one blank cell around the box so no stray glyphs touch its border
+        right = 1 if x0 + b.cell_len < width else 0
+        lines[top + i] = put(lines[top + i], x0 - left, Text(" " * left) + b + Text(" " * right))
         blocked.append((top + i, x0, x0 + b.cell_len, ("noop",)))
     return blocked + hits
 
@@ -977,7 +1018,7 @@ def build_frame(state: State, width: int, height: int) -> Frame:
     body = body_lines(state, width, body_h)[:body_h]
     body += [Line() for _ in range(body_h - len(body))]
     rows = ([header_line(state, width), tabs_line(state.tab, width)] + body
-            + [action_line(state, width), status_line(state)])[:height]
+            + [action_line(state, width), status_line(state, width)])[:height]
     lines, spans, row_hits = [], [], []  # type: List[Text], List[Hit], List[Hit]
     for r, ln in enumerate(rows):
         ln.text.truncate(width, overflow="crop", pad=True)
@@ -1172,7 +1213,8 @@ def handle_key(state: State, key: str, api: ApiCall) -> None:
     elif key == "x" and state.tab == 1 and state.selected is not None:
         t = items[state.selected]
         state.confirm = {"id": t["id"], "label": "%s %s ngày %s" % (t["category"], money(t["amount"]),
-                                                                      _vi_date(t["date"]))}
+                                                                      _vi_date(t["date"])),
+                         "short": short_money(-t["amount"] if t["kind"] == "expense" else t["amount"])}
 
 
 def handle_click(state: State, x: int, y: int, api: ApiCall) -> None:
