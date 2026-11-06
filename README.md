@@ -43,25 +43,16 @@ Các cờ toàn cục có thể đặt trước bất kỳ lệnh con nào của
 
 ---
 
-## Giao diện TUI (`eco ui`)
+## Giao diện TUI (`eco`)
 
-Khởi chạy bảng điều khiển tương tác toàn màn hình trên terminal:
+Gõ `eco` (hoặc `eco ui`) để mở. **Mọi thao tác đều bấm chuột được** — không cần nhớ phím:
 
-```bash
-eco ui
-```
+- **4 tab** ở dòng trên cùng: Tổng quan · Giao dịch · Dự định · Ngân sách — nhấp để chuyển.
+- **Nút hành động** ở dòng dưới cùng: `+ Chi` `+ Thu` `+ Dự định`, khi chọn một dòng có thêm `✓ Xong` / `✕ Xoá`, và `Thoát`.
+- **Form thêm**: nhấp số tiền gợi ý (`50k` … `1tr`) và danh mục hay dùng, rồi nhấp `Lưu`.
+- Nhấp vào một dòng để chọn, lăn chuột để cuộn.
 
-### Phím tắt trong TUI
-
-| Phím | Chức năng |
-| :--- | :--- |
-| `1` – `5` | Chuyển nhanh giữa 5 tab: **Tổng quan**, **Giao dịch**, **Dự định**, **Ngân sách**, **Dự báo** |
-| `j` / `k` | Di chuyển lên / xuống trong danh sách |
-| `a` | Thêm nhanh khoản chi tiêu (`expense`) |
-| `i` | Thêm nhanh khoản thu nhập (`income`) |
-| `p` | Thêm nhanh dự định thu/chi tương lai (`plan`) |
-| `d` | Đánh dấu dự định đang chọn là hoàn thành (`plan done`) |
-| `q` | Thoát giao diện TUI |
+Phím tắt (luôn ghi sẵn trên từng nút): `1`–`4` tab · `a` thêm chi · `i` thêm thu · `p` thêm dự định · `d` xong · `x` xoá · `↑↓` chọn · `Enter` lưu · `Esc` huỷ · `q` thoát.
 
 ---
 
