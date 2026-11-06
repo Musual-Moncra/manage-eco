@@ -188,11 +188,24 @@ def dash(params, store, today):
     }
 
 
+def categories(params, store, today):
+    """Categories by use count (most used first), split by kind — for pick lists in UIs."""
+    counts = {INCOME: {}, EXPENSE: {}}  # type: Dict[str, Dict[str, int]]
+    for t in store.list_transactions():
+        counts[t.kind][t.category] = counts[t.kind].get(t.category, 0) + 1
+    for p in store.list_plans(status=None):
+        counts[p.kind].setdefault(p.category, 0)
+    for b in store.list_budgets():
+        counts[EXPENSE].setdefault(b.category, 0)
+    rank = lambda c: [k for k, _ in sorted(c.items(), key=lambda kv: (-kv[1], kv[0]))]
+    return {"expense": rank(counts[EXPENSE]), "income": rank(counts[INCOME])}
+
+
 COMMANDS = {
     "income": income, "expense": expense, "list": list_, "rm": rm, "summary": summary,
     "plan add": plan_add, "plan list": plan_list, "plan done": plan_done, "plan cancel": plan_cancel,
     "budget set": budget_set, "budget status": budget_status,
-    "forecast": forecast, "goal": goal, "dash": dash,
+    "forecast": forecast, "goal": goal, "dash": dash, "categories": categories,
 }  # type: Dict[str, Callable[[dict, Any, date], dict]]
 
 

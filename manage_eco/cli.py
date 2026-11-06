@@ -70,6 +70,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--by", required=True)
 
     sub.add_parser("dash", help="bảng tổng quan")
+    sub.add_parser("categories", help="danh mục đã dùng (nhiều nhất trước)")
     sub.add_parser("ui", help="giao diện toàn màn hình (TUI)")
     return p
 

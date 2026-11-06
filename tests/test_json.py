@@ -413,6 +413,26 @@ class JsonCliTest(unittest.TestCase):
         self.assertEqual(data["upcoming"], [])
         self.assertIsNone(data["lowest"])
 
+    # --- categories ----------------------------------------------------
+    def test_categories(self):
+        p = self.ok("categories")
+        self.assert_command(p, "categories")
+        self.assert_keys(p["data"], {"expense", "income"}, exact=True)
+        self.assertEqual(p["data"], {"expense": [], "income": []})
+
+        self.ok("income", "1000000", "salary", "-d", "2026-11-01")
+        self.ok("expense", "100", "food", "-d", "2026-11-02")
+        self.ok("expense", "100", "food", "-d", "2026-11-03")
+        self.ok("expense", "100", "transport", "-d", "2026-11-04")
+        self.ok("plan", "add", "Rent", "1000", "housing", "--due", "2026-12-01")
+        self.ok("plan", "add", "Bonus", "1000", "job", "--due", "2026-12-01", "--income")
+        self.ok("budget", "set", "bills", "100000")
+
+        p = self.ok("categories")
+        data = p["data"]
+        self.assertEqual(data["expense"], ["food", "transport", "bills", "housing"])
+        self.assertEqual(data["income"], ["salary", "job"])
+
     # --- envelope details ---------------------------------------------
     def test_stdout_is_one_json_object_without_ansi(self):
         proc = self.run_cli("dash")

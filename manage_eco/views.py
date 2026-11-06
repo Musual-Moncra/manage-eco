@@ -167,4 +167,7 @@ def render(cmd: str, d: dict):
             title="Mục tiêu tiết kiệm", box=box.ROUNDED, border_style=ACCENT, expand=False)
     if cmd == "dash":
         return dashboard(d)
+    if cmd == "categories":
+        return Text.from_markup("[bold]Chi:[/] %s\n[bold]Thu:[/] %s"
+                                % (", ".join(d["expense"]) or "-", ", ".join(d["income"]) or "-"))
     return Text(str(d))

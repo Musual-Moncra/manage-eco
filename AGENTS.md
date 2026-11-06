@@ -211,6 +211,19 @@ python3 -m manage_eco --json --db eco.db --today 2026-11-06 dash
 `month` is a summary object; `upcoming` is the 30-day forecast; `lowest` is the
 90-day minimum running balance.
 
+### `categories`
+
+```bash
+python3 -m manage_eco --json --db eco.db --today 2026-11-06 categories
+```
+
+```json
+{"ok": true, "command": "categories", "data": {"expense": ["food", "transport", "bills", "housing"], "income": ["salary", "job"]}}
+```
+
+Categories split by kind, most used first (ties alphabetical). Plan and budget
+categories are included with count 0.
+
 ## Python API
 
 `manage_eco.api.execute(cmd, params, store, today)` returns the same `data`

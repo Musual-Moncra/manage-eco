@@ -20,7 +20,7 @@
 Yêu cầu **Python 3.9+**.
 
 ```bash
-./scripts/install.sh   # tạo lệnh `eco` trong ~/.local/bin (chạy thẳng từ thư mục repo)
+./scripts/install.sh   # tạo lệnh `eco` trong /usr/local/bin → dùng được ở mọi terminal/shell
 eco                    # mở ngay giao diện TUI
 ```
 

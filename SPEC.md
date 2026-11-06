@@ -53,6 +53,7 @@ Commands → data:
 - `budget set CATEGORY AMOUNT` → `{budget:{category,limit}}`; `budget status [--month]` → `{month, budgets:[{category,limit,spent,remaining,pct}]}`
 - `forecast [--days N]` → `{today, balance, days, rows:[{date,name,amount,balance}], lowest:{date,balance}|null}`
 - `goal TARGET --by DATE` → `{target, by, needed, months_left, per_month}`
+- `categories` → `{expense:[names], income:[names]}` most used first (includes plan/budget categories)
 - `dash` → `{today, balance, month:{...summary}, overdue:[plans], budgets:[...], upcoming:[forecast rows 30d], lowest:{...}|null (90d)}`
 
 ### RAM budget
