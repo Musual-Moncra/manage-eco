@@ -1,3 +1,4 @@
+import os
 import re
 import unittest
 from datetime import date
@@ -11,14 +12,22 @@ from manage_eco.db import Store
 
 TODAY = date(2026, 11, 6)
 _SFX = mock.patch.object(tui.sfx, "play", return_value=True)
+REAL_PIXEL = getattr(tui.anim, "PixelPopup", None)
+# Most tests check what is under the overlays: they run with the corner toast (as before v6).
+# PixelPopupTest / RealPixelPopupTest switch the centered popup back on.
+_NO_PIXEL = mock.patch.object(tui.anim, "PixelPopup", None, create=True) if tui.anim else None
 
 
 def setUpModule():
     _SFX.start()  # never spawn real audio players from tests
+    if _NO_PIXEL:
+        _NO_PIXEL.start()
 
 
 def tearDownModule():
     _SFX.stop()
+    if _NO_PIXEL:
+        _NO_PIXEL.stop()
 
 DASH = {"balance": 23_715_000,
         "month": {"month": "2026-11", "income": 15_000_000, "expense": 85_000, "net": 14_915_000},
@@ -27,7 +36,7 @@ DASH = {"balance": 23_715_000,
                     {"category": "giải trí", "limit": 100, "spent": 120, "remaining": -20, "pct": 120.0}],
         "upcoming": [{"date": "2026-11-10", "name": "thuê nhà", "amount": -13_000_000, "balance": -500_000}],
         "lowest": {"date": "2026-11-10", "balance": -500_000}}
-TXS = [{"id": i, "date": "2026-11-%02d" % i, "amount": 1000 * i, "kind": "expense", "category": "ăn",
+TXS = [{"id": i, "date": "2026-10-%02d" % (i % 28 + 1), "amount": 1000 * i, "kind": "expense", "category": "ăn",
         "note": "n%d" % i, "signed": -1000 * i} for i in range(1, 41)]
 PLANS = [{"id": 7, "name": "laptop", "amount": 100, "kind": "expense", "due_date": "2026-12-01",
           "category": "do", "recurrence": "once", "status": "pending"},
@@ -47,7 +56,8 @@ class FakeApi:
         return {"dash": DASH, "list": {"transactions": TXS, "balance": 1}, "plan list": {"plans": PLANS},
                 "budget status": {"month": "2026-11", "budgets": DASH["budgets"]},
                 "categories": {"expense": ["ăn uống", "đi lại", "nhà"], "income": ["lương"]},
-                "sound": {"sound": params.get("state", "on") != "off"}}.get(cmd, {})
+                "sound": {"sound": params.get("state", "on") != "off"},
+                "icons": {"icons": params.get("mode") or "symbol"}}.get(cmd, {})
 
     def made(self, cmd):
         return [p for c, p in self.calls if c == cmd]
@@ -118,8 +128,9 @@ class FrameTest(unittest.TestCase):
             self.assertEqual([t[2] for t in tabs], [0, 1, 2, 3])
             self.assertTrue(all(a[1] <= b[0] for a, b in zip(tabs, tabs[1:])), "tabs overlap")
             keys = {a[1]: r for r, x0, x1, a in f.hits if a[0] == "key"}
-            self.assertEqual(set(keys), {"a", "i", "p", "m", "q"})
-            self.assertEqual(set(keys.values()), {22})
+            self.assertEqual(set(keys) - {"I"}, {"a", "i", "p", "m", "q"})
+            self.assertEqual({r for k, r in keys.items() if k != "I"}, {22})
+            self.assertEqual(keys.get("I", 1), 1)  # icon switch sits on the tab row when it fits
             self.assertTrue(all(x1 <= w for r, x0, x1, a in f.hits))
 
     def test_hit_map_list_rows(self):
@@ -414,8 +425,8 @@ class ResponsiveTest(unittest.TestCase):
             self.assertTrue(label.strip(), (what, a))  # nothing clickable is blank
             if a[0] == "tab" and r == 1:  # the tab bar (rows elsewhere may also open a tab)
                 i = a[1]
-                self.assertTrue(any(s in label for s in (tui.TABS_SHORT[i], tui.TAB_ICONS[i], str(i + 1))),
-                                (what, label))
+                marks = [m for m in (tui.TABS_SHORT[i], tui.G["tabs"][i], str(i + 1)) if m]
+                self.assertTrue(any(m in label for m in marks), (what, label))
             if a[0] == "key" and a[1] not in ("enter", "esc"):
                 self.assertIn(a[1], label, (what, label))
         return f
@@ -467,19 +478,29 @@ class ResponsiveTest(unittest.TestCase):
             self.assertEqual(len(rows), min(40, h - 5))
 
     def test_header_mood(self):
-        out = text(frame(self.state)).splitlines()[0]
-        self.assertIn("(｡•́︿•̀｡)", out)  # FakeApi forecast goes negative
-        self.state.dash = {"lowest": None, "budgets": [{"pct": 85.0}]}
-        self.assertIn("(・_・;)", text(frame(self.state)).splitlines()[0])
-        self.state.dash = {"lowest": None, "budgets": [{"pct": 10.0}]}
-        self.assertIn("(◕‿◕)", text(frame(self.state)).splitlines()[0])
+        self.addCleanup(tui.set_icons, "symbol")
+        for mode, faces in (("emoji", ("(｡•́︿•̀｡)", "(・_・;)", "(◕‿◕)")), ("symbol", ("(T_T)", "(o_o;)", "(^_^)"))):
+            tui.set_icons(mode)
+            self.state.dash = DASH  # FakeApi forecast goes negative
+            self.assertIn(faces[0], text(frame(self.state)).splitlines()[0])
+            self.state.dash = {"lowest": None, "budgets": [{"pct": 85.0}]}
+            self.assertIn(faces[1], text(frame(self.state)).splitlines()[0])
+            self.state.dash = {"lowest": None, "budgets": [{"pct": 10.0}]}
+            self.assertIn(faces[2], text(frame(self.state)).splitlines()[0])
 
     def test_category_icons(self):
         cases = {"Ăn uống": "🍜", "tiền nhà": "🏠", "xăng xe": "🛵", "Lương": "💰", "mua sắm": "🛒", "học": "📚",
                  "điện nước": "💡", "Claude Pro": "💻", "khác": "•", "thuận": "•"}
+        symbols = {"Ăn uống": "♨", "tiền nhà": "⌂", "Lương": "★", "Claude Pro": "⚙", "khác": "•"}
         for name, icon in cases.items():
-            self.assertEqual(tui.category_icon(name), icon, name)
+            self.assertEqual(tui.category_icon(name, "emoji"), icon, name)
+        for name, icon in symbols.items():
+            self.assertEqual(tui.category_icon(name, "symbol"), icon, name)
+        self.addCleanup(tui.set_icons, "symbol")
+        tui.set_icons("emoji")
         self.assertEqual(cell_len(tui.cat_label("khác")), cell_len("🍜 khác"))  # aligned with emoji icons
+        tui.set_icons("symbol")
+        self.assertEqual(tui.cat_label("ăn uống"), "♨ ăn uống")
 
     def test_ascii_mode(self):
         tui.use_ascii(True)
@@ -601,6 +622,8 @@ class AnimationTest(unittest.TestCase):
         self.assertFalse(any(a == ("noop",) for *_, a in f.hits))
 
     def test_sparkle_and_count_up(self):
+        self.addCleanup(tui.set_icons, "symbol")
+        tui.set_icons("emoji")  # anim's own sparkle glyphs
         self.state.now = 300.0
         before = self.state.balance
         self.save_expense()
@@ -608,7 +631,8 @@ class AnimationTest(unittest.TestCase):
         self.state.balance = before - 50_000  # FakeApi balance does not change; simulate the new value
         self.state.count = (before, before - 50_000, 300.0)
         mid = self.at(300.2)
-        self.assertTrue(any(c in text(mid) for c in "✦✧⋆˚♡✿"))
+        sparks = set(tui.anim.UNICODE_SPARKLES) - set("+*.")  # anim's own glyphs (they evolve)
+        self.assertTrue(sparks & set(text(mid)), sparks)
         shown = self.state.shown_balance()
         self.assertTrue(before - 50_000 < shown < before, shown)
         self.at(301.0)
@@ -638,6 +662,334 @@ class AnimationTest(unittest.TestCase):
         self.assertEqual(self.state.tab, 2)
         tui.dispatch(self.state, "a", self.api)
         self.assertIsNotNone(self.state.form)
+
+
+class EditTest(unittest.TestCase):
+    def setUp(self):
+        self.api = FakeApi()
+        self.state = tui.State(TODAY)
+        tui.init(self.state, self.api)
+
+    def retype(self, field, value):
+        click(self.state, ("focus", field), self.api)
+        for _ in range(len(self.state.form.values[field])):
+            tui.dispatch(self.state, "backspace", self.api)
+        for ch in value:
+            tui.dispatch(self.state, ch, self.api)
+
+    def test_button_only_with_a_selection(self):
+        click(self.state, ("tab", 1), self.api)
+        self.assertNotIn(("key", "e"), [a for *_, a in frame(self.state).hits])
+        tui.dispatch(self.state, "e", self.api)
+        self.assertIsNone(self.state.form)
+        click(self.state, ("select", 0), self.api)
+        self.assertIn("✎ Sửa", text(frame(self.state)))
+        click(self.state, ("tab", 0), self.api)
+        self.assertNotIn(("key", "e"), [a for *_, a in frame(self.state).hits])
+
+    def test_prefill_and_save_transaction_by_clicks(self):
+        click(self.state, ("tab", 1), self.api)
+        click(self.state, ("select", 0), self.api)  # newest first: #40
+        click(self.state, ("key", "e"), self.api)
+        form = self.state.form
+        self.assertEqual(form.values, {"amount": "40.000", "category": "ăn", "note": "n40", "date": "13/10/2026",
+                                       "kind": "expense"})
+        self.assertIn("Sửa giao dịch #40", text(frame(self.state)))
+        click(self.state, ("chip", "kind", "income"), self.api)
+        self.retype("amount", "45k")
+        click(self.state, ("key", "enter"), self.api)
+        self.assertIsNone(self.state.form)
+        self.assertEqual(self.api.made("edit"), [{"id": 40, "amount": 45_000, "category": "ăn", "note": "n40",
+                                                  "date": "2026-10-13", "kind": "income"}])
+        self.assertIn("Đã sửa giao dịch #40", self.state.status[0])
+        self.assertIn("+45.000 ₫", self.state.status[0])
+        tui.sfx.play.assert_called_with("warn", enabled=True)  # save sound (FakeApi forecast is negative)
+
+    def test_edit_by_keys_keeps_values(self):
+        for key in ("2", "j", "j", "e"):
+            tui.dispatch(self.state, key, self.api)
+        self.assertEqual(self.state.form.title, "Sửa giao dịch #39")
+        tui.dispatch(self.state, "enter", self.api)
+        self.assertEqual(self.api.made("edit"), [{"id": 39, "amount": 39_000, "category": "ăn", "note": "n39",
+                                                  "date": "2026-10-12", "kind": "expense"}])
+
+    def test_note_can_be_cleared(self):
+        for key in ("2", "j", "e"):
+            tui.dispatch(self.state, key, self.api)
+        self.retype("note", "")
+        tui.dispatch(self.state, "enter", self.api)
+        self.assertEqual(self.api.made("edit")[0]["note"], "")
+
+    def test_double_click_opens_edit(self):
+        click(self.state, ("tab", 1), self.api)
+        self.state.now = 10.0
+        click(self.state, ("select", 2), self.api)
+        self.state.now = 11.0  # too slow: just a second selection
+        click(self.state, ("select", 2), self.api)
+        self.assertIsNone(self.state.form)
+        self.state.now = 11.2
+        click(self.state, ("select", 2), self.api)
+        self.assertEqual(self.state.form.edit_id, 38)
+
+    def test_plan_edit_prefill_and_new_day(self):
+        click(self.state, ("tab", 2), self.api)
+        click(self.state, ("select", 1), self.api)
+        click(self.state, ("key", "e"), self.api)
+        form = self.state.form
+        self.assertEqual(form.values, {"name": "lương", "amount": "50", "category": "luong", "every": "monthly",
+                                       "day": "5", "due": "05/12/2026", "kind": "income"})
+        self.assertIn("Sửa dòng tiền #8", text(frame(self.state, 100, 40)))
+        click(self.state, ("chip", "day", "10"), self.api, 100, 40)
+        self.assertEqual(form.values["due"], "")  # api moves the due date to the new day
+        tui.dispatch(self.state, "enter", self.api)
+        self.assertEqual(self.api.made("plan edit"), [{"id": 8, "name": "lương", "amount": 50, "category": "luong",
+                                                       "day": 10, "every": "monthly", "kind": "income"}])
+        self.assertIn("Đã sửa dòng tiền", self.state.status[0])
+
+    def test_plan_edit_to_once_drops_day(self):
+        for key in ("3", "j", "j", "e"):
+            tui.dispatch(self.state, key, self.api)
+        click(self.state, ("chip", "every", "once"), self.api, 100, 40)
+        tui.dispatch(self.state, "enter", self.api)
+        params = self.api.made("plan edit")[0]
+        self.assertNotIn("day", params)
+        self.assertEqual((params["every"], params["due"]), ("once", "2026-12-05"))
+
+    def test_edit_api_error_keeps_form(self):
+        self.api.fail = LookupError("không tìm thấy giao dịch #40")
+        for key in ("2", "j", "e", "enter"):
+            tui.dispatch(self.state, key, self.api)
+        self.assertIsNotNone(self.state.form)
+        self.assertIn("không tìm thấy giao dịch #40", text(frame(self.state)))
+
+
+class IconModeTest(unittest.TestCase):
+    BANNED = set("⋆✦✧✿˚♡☆") | set(getattr(tui.anim, "UNICODE_SPARKLES", ())) - set("+*.·")
+
+    def setUp(self):
+        self.api = FakeApi()
+        self.state = tui.State(TODAY)
+        self.state.now = 50.0
+        tui.init(self.state, self.api)
+        self.addCleanup(tui.set_icons, "symbol")
+
+    def all_frames(self, w=120, h=32):
+        out = []
+        for tab in range(4):
+            tui.switch_tab(self.state, tab, self.api)
+            self.state.selected = 0 if tab in (1, 2) else None
+            out.append(text(frame(self.state, w, h)))
+        tui.dispatch(self.state, "p", self.api)
+        out.append(text(frame(self.state, w, h)))
+        tui.dispatch(self.state, "esc", self.api)
+        self.state.now = 60.0
+        tui.dispatch(self.state, "a", self.api)
+        click(self.state, ("chip", "amount", "50k"), self.api, w, h)
+        click(self.state, ("chip", "category", "nhà"), self.api, w, h)
+        tui.dispatch(self.state, "enter", self.api)  # toast/popup + sparkle
+        for t in (60.2, 60.5, 61.5):
+            self.state.now = t
+            out.append(text(frame(self.state, w, h)))
+        return "\n".join(out)
+
+    def test_symbol_mode_is_font_safe(self):
+        self.assertEqual(tui.ICON_MODE, "symbol")  # the default
+        out = self.all_frames()
+        wide = sorted({ch for ch in out if ord(ch) >= 0x1F000 or cell_len(ch) > 1})
+        self.assertEqual(wide, [])
+        self.assertFalse(self.BANNED & set(out))
+        self.assertFalse([ch for ch in out if 0xFF61 <= ord(ch) <= 0xFF9F])  # half-width kana
+        for mark in ("⌂", "⇄", "↻", "◎", "♪ bật", "♨ ăn uống"):
+            self.assertIn(mark, out)
+
+    def test_emoji_mode(self):
+        tui.set_icons("emoji")
+        out = self.all_frames()
+        self.assertIn("🏠", out)
+        self.assertIn("🍜 ăn", out)
+        self.assertIn("🔊", out)
+
+    def test_off_mode(self):
+        tui.set_icons("off")
+        out = self.all_frames()
+        for mark in ("⌂", "🏠", "♨", "🍜", "♪", "🔊"):
+            self.assertNotIn(mark, out)
+        self.assertIn("Âm: bật", out)
+        self.assertFalse([ch for ch in out if ord(ch) >= 0x1F000])
+
+    def test_I_cycles_and_persists(self):
+        modes = []
+        for _ in range(3):
+            tui.dispatch(self.state, "I", self.api)
+            modes.append(tui.ICON_MODE)
+        self.assertEqual(modes, ["emoji", "off", "symbol"])
+        self.assertEqual([p["mode"] for p in self.api.made("icons") if p], ["emoji", "off", "symbol"])
+
+    def test_icon_switch_is_clickable_when_wide(self):
+        click(self.state, ("key", "I"), self.api, 140, 30)
+        self.assertEqual(tui.ICON_MODE, "emoji")
+        self.assertIn("Icon: emoji", text(frame(self.state, 140, 30)).splitlines()[1])
+
+    def test_env_overrides_stored_mode(self):
+        with mock.patch.dict(os.environ, {"ECO_ICONS": "emoji"}):
+            tui.init(tui.State(TODAY), self.api)
+        self.assertEqual(tui.ICON_MODE, "emoji")
+        with mock.patch.dict(os.environ, {"ECO_ICONS": "bogus"}):
+            tui.init(tui.State(TODAY), self.api)
+        self.assertEqual(tui.ICON_MODE, "symbol")  # invalid env value: stored setting
+
+
+class FakePixel:
+    """Stand-in for anim.PixelPopup: a 2-line box, None when narrow (forces the toast fallback)."""
+    duration = 1.6
+    made = []
+
+    def __init__(self, icon, title, subtitle="", color=None, *, glyphs="symbol", seed=0):
+        self.icon, self.title, self.subtitle, self.glyphs = icon, title, subtitle, glyphs
+        FakePixel.made.append(self)
+
+    def frame(self, t, width, height):
+        if t >= self.duration or width < 60:
+            return None
+        lines = [Text("[%s] %s" % (self.icon, self.title)), Text(self.subtitle or "-")]
+        w = max(l.cell_len for l in lines)
+        return (height - 2) // 2, (width - w) // 2, lines
+
+
+@unittest.skipIf(tui.anim is None, "anim.py not available")
+class PixelPopupTest(unittest.TestCase):
+    def setUp(self):
+        FakePixel.made = []
+        patcher = mock.patch.object(tui.anim, "PixelPopup", FakePixel, create=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.api = FakeApi()
+        self.state = tui.State(TODAY)
+        self.state.now = 10.0
+        tui.init(self.state, self.api)
+
+    def save(self, w=100, h=30):
+        tui.dispatch(self.state, "a", self.api)
+        click(self.state, ("chip", "amount", "50k"), self.api, w, h)
+        click(self.state, ("chip", "category", "nhà"), self.api, w, h)
+        tui.dispatch(self.state, "enter", self.api)
+
+    def test_popups_for_each_event(self):
+        self.save()
+        tui.dispatch(self.state, "3", self.api)  # keys dismiss the popup and still act
+        tui.dispatch(self.state, "j", self.api)
+        tui.dispatch(self.state, "d", self.api)
+        tui.dispatch(self.state, "2", self.api)
+        tui.dispatch(self.state, "j", self.api)
+        tui.dispatch(self.state, "e", self.api)
+        tui.dispatch(self.state, "enter", self.api)
+        tui.dispatch(self.state, "j", self.api)
+        tui.dispatch(self.state, "x", self.api)
+        tui.dispatch(self.state, "y", self.api)
+        tui.dispatch(self.state, "a", self.api)
+        tui.dispatch(self.state, "enter", self.api)  # validation error
+        got = [(p.icon, p.title) for p in FakePixel.made]
+        self.assertEqual(got, [("check", "Đã lưu!"), ("coin", "Đã thanh toán!"), ("pencil", "Đã sửa!"),
+                               ("trash", "Đã xoá"), ("cross", "Kiểm tra lại các ô được đánh dấu ▲")])
+        self.assertEqual(FakePixel.made[0].subtitle, "nhà -50.000 ₫")
+        self.assertEqual(FakePixel.made[0].glyphs, "symbol")
+
+    def test_centered_over_body_without_toast(self):
+        self.save()
+        self.state.now += 0.3
+        f = frame(self.state, 100, 30)
+        rows = [r for r, t in enumerate(f.lines) if "[check] Đã lưu!" in t.plain]
+        self.assertEqual(rows, [2 + (26 - 2) // 2])
+        self.assertFalse(any("Đã lưu khoản chi" in t.plain for t in f.lines[:-2]))  # no corner toast
+        self.assertTrue(self.state.animating())
+
+    def test_falls_back_to_toast_when_it_does_not_fit(self):
+        self.save(50, 24)
+        self.state.now += 0.3
+        out = text(frame(self.state, 50, 24))
+        self.assertNotIn("[check]", out)
+        self.assertTrue(any("Đã lưu khoản" in l for l in out.splitlines()[:-2]))
+
+    def test_key_dismisses_and_still_acts(self):
+        self.save()
+        self.state.now += 0.2
+        tui.dispatch(self.state, "2", self.api)
+        self.assertIsNone(self.state.popup)
+        self.assertEqual(self.state.tab, 1)
+        self.assertNotIn("[check]", text(frame(self.state, 100, 30)))
+
+    def test_click_only_dismisses(self):
+        self.save()
+        self.state.now += 0.2
+        click(self.state, ("tab", 2), self.api, 100, 30)
+        self.assertIsNone(self.state.popup)
+        self.assertEqual(self.state.tab, 0)  # the click did not reach the tab underneath
+        click(self.state, ("tab", 2), self.api, 100, 30)
+        self.assertEqual(self.state.tab, 2)
+
+    def test_finished_popup_hides_fallback_and_stops_animating(self):
+        self.save()
+        self.state.now += 1.7
+        out = text(frame(self.state, 100, 30))
+        self.assertNotIn("[check]", out)
+        self.assertFalse(any("Đã lưu khoản" in l for l in out.splitlines()[:-2]))
+        self.assertFalse(self.state.animating())
+
+
+@unittest.skipUnless(REAL_PIXEL is not None, "anim.PixelPopup not landed")
+class RealPixelPopupTest(unittest.TestCase):
+    def setUp(self):
+        patcher = mock.patch.object(tui.anim, "PixelPopup", REAL_PIXEL)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_long_subtitle_keeps_its_amount(self):
+        api = FakeApi()
+        state = tui.State(TODAY)
+        state.now = 1.0
+        tui.init(state, api)
+        tui.dispatch(state, "p", api)
+        for value in ("Tiền thuê nhà chung cư cao cấp tháng mười một", "5tr", "nhà"):
+            for ch in value:
+                tui.dispatch(state, ch, api)
+            tui.dispatch(state, "tab", api)
+        tui.dispatch(state, "enter", api)
+        state.now = 2.0  # hold phase: title + subtitle visible
+        out = text(frame(state, 120, 40))
+        self.assertIn("Đã lưu!", out)
+        self.assertTrue(any("-5tr" in l or "-5.000.000 ₫" in l for l in out.splitlines()[:-2]), out)
+        for m in re.finditer(r"[+-]?\d{1,3}(?:\.\d{3})+", out):
+            self.assertTrue(out[m.end():].startswith(" ₫"), out)
+
+    def test_symbol_popup_is_font_safe(self):
+        api = FakeApi()
+        state = tui.State(TODAY)
+        state.now = 1.0
+        tui.init(state, api)
+        tui.dispatch(state, "a", api)
+        tui.dispatch(state, "enter", api)  # error → cross popup
+        chars = set()
+        for t in (1.05, 1.3, 1.8, 2.4):
+            state.now = t
+            chars |= set(text(frame(state, 120, 40)))
+        self.assertFalse([ch for ch in chars if ord(ch) >= 0x1F000 or cell_len(ch) > 1])
+
+    def test_real_popup_renders_and_fits(self):
+        api = FakeApi()
+        state = tui.State(TODAY)
+        state.now = 5.0
+        tui.init(state, api)
+        tui.dispatch(state, "a", api)
+        click(state, ("chip", "amount", "50k"), api, 120, 40)
+        click(state, ("chip", "category", "nhà"), api, 120, 40)
+        tui.dispatch(state, "enter", api)
+        self.assertIsNotNone(state.popup)
+        for t in (5.05, 5.4, 5.9, 6.4, 6.7):
+            state.now = t
+            for w, h in ((120, 40), (60, 20), (40, 12)):
+                f = frame(state, w, h)
+                self.assertEqual(len(f.lines), h)
+                self.assertTrue(all(cell_len(l.plain) == w for l in f.lines))
 
 
 class LoopTest(unittest.TestCase):
@@ -705,11 +1057,11 @@ class SoundTest(unittest.TestCase):
         self.assertEqual(self.events(), ["error"])
 
     def test_toggle_persists_and_mutes(self):
-        self.assertIn("🔊", text(frame(self.state)))
+        self.assertIn("♪ bật", text(frame(self.state)))
         click(self.state, ("key", "m"), self.api)
         self.assertEqual(self.api.made("sound")[-1], {"state": "off"})
         self.assertFalse(self.state.sound)
-        self.assertIn("🔇", text(frame(self.state)))
+        self.assertIn("♪ tắt", text(frame(self.state)))
         click(self.state, ("tab", 3), self.api)
         tui.sfx.play.assert_called_with("tab", enabled=False)
         tui.dispatch(self.state, "m", self.api)

@@ -172,6 +172,45 @@ class JsonCliTest(unittest.TestCase):
 
         self.err("not_found", 1, "rm", "999")
 
+    # --- edit ----------------------------------------------------------
+    def test_edit_partial_update(self):
+        p = self.ok("expense", "100000", "food", "-n", "lunch", "-d", "2026-11-02")
+        tid = p["data"]["transaction"]["id"]
+
+        p = self.ok("edit", str(tid), "--amount", "150000")
+        self.assert_command(p, "edit")
+        self.assert_keys(p["data"], {"transaction", "balance"})
+        tx = p["data"]["transaction"]
+        self.assert_tx(tx)
+        self.assertEqual(tx["amount"], 150000)
+        self.assertEqual(tx["signed"], -150000)
+        self.assertEqual(tx["category"], "food")
+        self.assertEqual(tx["note"], "lunch")
+        self.assertEqual(tx["date"], "2026-11-02")
+        self.assertEqual(p["data"]["balance"], -150000)
+
+        p = self.ok("edit", str(tid), "-n", "")
+        self.assertEqual(p["data"]["transaction"]["note"], "")
+
+        p = self.ok("edit", str(tid), "--kind", "income")
+        tx = p["data"]["transaction"]
+        self.assertEqual(tx["kind"], "income")
+        self.assertEqual(tx["signed"], 150000)
+        self.assertEqual(p["data"]["balance"], 150000)
+
+        p = self.ok("edit", str(tid), "--category", "salary", "-d", "2026-11-03")
+        tx = p["data"]["transaction"]
+        self.assertEqual(tx["category"], "salary")
+        self.assertEqual(tx["date"], "2026-11-03")
+        self.assertEqual(tx["amount"], 150000)
+        self.assertEqual(tx["kind"], "income")
+
+    def test_edit_errors(self):
+        self.err("not_found", 1, "edit", "999", "--amount", "1000")
+        p = self.ok("expense", "1000", "food")
+        tid = p["data"]["transaction"]["id"]
+        self.err("invalid", 2, "edit", str(tid), "--amount", "abc")
+
     # --- summary -------------------------------------------------------
     def test_summary(self):
         self.ok("income", "20000000", "salary", "-d", "2026-11-01")
@@ -325,6 +364,47 @@ class JsonCliTest(unittest.TestCase):
         self.err("not_found", 1, "plan", "done", "999")
         self.err("not_found", 1, "plan", "cancel", "999")
 
+    def test_plan_edit(self):
+        p = self.ok("plan", "add", "Rent", "25000000", "housing",
+                    "--due", "2026-12-01", "--every", "monthly", "--day", "31")
+        pid = p["data"]["plan"]["id"]
+
+        p = self.ok("plan", "edit", str(pid), "--name", "Rent 2", "--amount", "30000000")
+        self.assert_command(p, "plan edit")
+        self.assert_keys(p["data"], {"plan"})
+        plan = p["data"]["plan"]
+        self.assert_plan(plan)
+        self.assertEqual(plan["name"], "Rent 2")
+        self.assertEqual(plan["amount"], 30000000)
+        self.assertEqual(plan["category"], "housing")
+        self.assertEqual(plan["due_date"], "2026-12-01")
+        self.assertEqual(plan["day"], 31)
+
+        p = self.ok("plan", "edit", str(pid), "--day", "20")
+        plan = p["data"]["plan"]
+        self.assertEqual(plan["day"], 20)
+        self.assertEqual(plan["due_date"], "2026-11-20")
+
+        p = self.ok("plan", "edit", str(pid), "--every", "weekly")
+        plan = p["data"]["plan"]
+        self.assertEqual(plan["recurrence"], "weekly")
+        self.assertIsNone(plan["day"])
+        self.assertEqual(plan["due_date"], "2026-11-20")
+
+        p = self.ok("plan", "edit", str(pid), "--every", "monthly", "--day", "15")
+        plan = p["data"]["plan"]
+        self.assertEqual(plan["recurrence"], "monthly")
+        self.assertEqual(plan["day"], 15)
+        self.assertEqual(plan["due_date"], "2026-11-15")
+
+    def test_plan_edit_errors(self):
+        p = self.ok("plan", "add", "X", "1000", "cat", "--due", "2026-12-01",
+                    "--every", "monthly")
+        pid = p["data"]["plan"]["id"]
+        self.err("invalid", 2, "plan", "edit", str(pid), "--every", "weekly", "--day", "5")
+        self.err("invalid", 2, "plan", "edit", str(pid), "--amount", "abc")
+        self.err("not_found", 1, "plan", "edit", "999", "--amount", "1000")
+
     # --- budget --------------------------------------------------------
     def test_budget_set_and_status(self):
         p = self.ok("budget", "set", "food", "3000000")
@@ -473,6 +553,30 @@ class JsonCliTest(unittest.TestCase):
         data = p["data"]
         self.assertEqual(data["expense"], ["food", "transport", "bills", "housing"])
         self.assertEqual(data["income"], ["salary", "job"])
+
+    # --- icons ---------------------------------------------------------
+    def test_icons_default_set_and_get(self):
+        p = self.ok("icons")
+        self.assert_command(p, "icons")
+        self.assert_keys(p["data"], {"icons"}, exact=True)
+        self.assertEqual(p["data"]["icons"], "symbol")
+
+        p = self.ok("icons", "emoji")
+        self.assertEqual(p["data"]["icons"], "emoji")
+        p = self.ok("icons")
+        self.assertEqual(p["data"]["icons"], "emoji")
+
+        p = self.ok("icons", "off")
+        self.assertEqual(p["data"]["icons"], "off")
+        p = self.ok("icons")
+        self.assertEqual(p["data"]["icons"], "off")
+
+        p = self.ok("icons", "symbol")
+        self.assertEqual(p["data"]["icons"], "symbol")
+
+    def test_icons_invalid(self):
+        proc = self.run_cli("icons", "rainbow")
+        self.assertEqual(proc.returncode, 2)
 
     # --- envelope details ---------------------------------------------
     def test_stdout_is_one_json_object_without_ansi(self):

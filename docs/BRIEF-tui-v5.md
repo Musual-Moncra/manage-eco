@@ -30,3 +30,12 @@ Hard limits (unchanged): rich only, no new deps, RSS < 45 MB, **idle = zero redr
 ## Verify (claude-1 runs at the end)
 `python3 -m unittest discover -s tests`, `bash scripts/memcheck.sh`, `bash scripts/idlecheck.sh`, real pty run at 50, 100 and 170 cols.
 Report: `RESULT status=… files=… tests=…` to claude-1.
+
+## D. v6 PixelPopup — centered pixel-art popup (user: "popup có icon tick giữa màn hình với animation pixel terminal")
+### anim.py (antigravity-1)
+- `PixelPopup(icon, title, subtitle="", color=None, *, glyphs="symbol", seed=0)`; icons `check | coin | pencil | trash | cross`, each a 16×16 bitmap (list of strings, plus per-icon **stroke order**: list of pixel coords in draw order, e.g. check = short stroke down-right then long stroke up-right) rendered with half blocks `▀ ▄ █` (2 px per cell → 16 cols × 8 rows). Pastel color per icon (check mint, coin gold, pencil lavender, trash coral, cross red).
+- `duration` ≈ 1.6 s. Timeline: 0–0.18 s rounded box grows from center (ease_out_back); 0.18–0.65 s icon pixels appear in stroke order (bright "pen head" pixel at the leading edge); 0.65–1.2 s hold, title/subtitle under the icon, a dotted ring pulses once around the icon (`· ∘ ○` symbol mode); 1.2–1.6 s dissolve: pixels turn `▓ → ▒ → ░ → space` in seeded random order. `cross` shakes horizontally ±1 col during 0.18–0.5 s.
+- `frame(t, width, height) -> Optional[Tuple[int, int, List[rich.text.Text]]]` = (top row, left col, lines) centered on screen; None when done. `size(width, height)` → (w, h). Compact mode when width < 44 or height < 16: 8×8 bitmap (cols 8 × rows 4); if even that does not fit, return None (caller falls back to Toast).
+- Pure/deterministic; tests: every icon bitmap 16×16 and its stroke covers all lit pixels, frames at t=0/0.4/1.0/1.5/1.7 (last None), centered position, compact mode, symbol mode has no codepoint ≥ U+1F000.
+### tui.py (claude-2)
+- Use PixelPopup centered over the body for: save (check, "Đã lưu!", item + amount), ✓ Xong (coin, "Đã thanh toán!"), sửa (pencil, "Đã sửa!"), xoá (trash, "Đã xoá"), errors (cross, message). Fall back to the bottom-right Toast if `frame()` returns None. Sparkle still bursts around the popup on success. Any key/click dismisses the popup immediately and is NOT swallowed for keys (clicks only dismiss). Idle rules unchanged.

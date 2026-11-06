@@ -56,30 +56,47 @@ CHIP_ON = "bold %s on %s" % (INK, INCOME_C)
 MOUSE_ON = "\x1b[?1000h\x1b[?1006h"
 MOUSE_OFF = "\x1b[?1000l\x1b[?1006l"
 FRAME_S = 0.033  # select timeout while an animation is running
+SPARKLE_S = 0.9  # anim.Sparkle default duration
 
+# Structural glyphs (single-width BMP: box drawing, blocks, arrows) and, separately, icon sets.
 UNICODE_GLYPHS = {"logo": "◆", "marker": "▸", "cursor": "▏", "rule": "─", "full": "█", "empty": "░", "ok": "✓",
-                  "err": "✗", "warn": "⚠", "late": "⏰", "arrow": "→", "prev": "‹", "next": "›", "cap_l": "▐",
-                  "cap_r": "▌", "done": "✓", "del": "✕", "spark": "▁▂▃▄▅▆▇█",
-                  "happy": "(◕‿◕)", "worried": "(・_・;)", "sad": "(｡•́︿•̀｡)", "sound_on": "🔊", "sound_off": "🔇"}
+                  "err": "✗", "arrow": "→", "prev": "‹", "next": "›", "cap_l": "▐", "cap_r": "▌", "done": "✓",
+                  "del": "✕", "spark": "▁▂▃▄▅▆▇█"}
 ASCII_GLYPHS = {"logo": "*", "marker": ">", "cursor": "|", "rule": "-", "full": "#", "empty": ".", "ok": "v",
-                "err": "x", "warn": "!", "late": "!", "arrow": "->", "prev": "<", "next": ">", "cap_l": "",
-                "cap_r": "", "done": "v", "del": "x", "spark": "_.-:=+*#",
-                "happy": ":)", "worried": ":/", "sad": ":(", "sound_on": "Am", "sound_off": "Tat"}
-G = UNICODE_GLYPHS  # current glyph set; see use_ascii()
-ICONS = True
+                "err": "x", "arrow": "->", "prev": "<", "next": ">", "cap_l": "", "cap_r": "", "done": "v",
+                "del": "x", "spark": "_.-:=+*#"}
+_PLAIN_FACES = {"success": "\\(^o^)/", "error": "(T_T)", "info": "(^_^)"}
+# icons: emoji = v5 set; symbol (default) = single-width BMP glyphs found in Menlo / SF Mono / DejaVu, no emoji;
+# off = no icons. "w" = cells reserved for a category icon. "toast" = faces passed to anim (None: anim's own).
+ICON_SETS = {
+    "emoji": {"tabs": ["🏠", "💸", "🔁", "🎯"], "happy": "(◕‿◕)", "worried": "(・_・;)", "sad": "(｡•́︿•̀｡)",
+              "sound_on": "🔊", "sound_off": "🔇", "warn": "⚠", "late": "⏰", "edit": "✎", "w": 2, "toast": None,
+              "popup": "emoji"},
+    "symbol": {"tabs": ["⌂", "⇄", "↻", "◎"], "happy": "(^_^)", "worried": "(o_o;)", "sad": "(T_T)",
+               "sound_on": "♪ bật", "sound_off": "♪ tắt", "warn": "▲", "late": "»", "edit": "✎", "w": 1,
+               "toast": _PLAIN_FACES, "popup": "symbol"},
+    "off": {"tabs": ["", "", "", ""], "happy": "(^_^)", "worried": "(o_o;)", "sad": "(T_T)",
+            "sound_on": "Âm: bật", "sound_off": "Âm: tắt", "warn": "!", "late": "!", "edit": "", "w": 0,
+            "toast": _PLAIN_FACES, "popup": "symbol"},
+}
+_ASCII_ICONS = dict(ICON_SETS["off"], happy=":)", worried=":/", sad=":(", sound_on="Am: on", sound_off="Am: off",
+                    toast={"success": ":)", "error": ":(", "info": ":)"}, popup="ascii")
+ICON_MODES = ("symbol", "emoji", "off")
+ASCII = False
+ICON_MODE = "symbol"
+G = dict(UNICODE_GLYPHS, **ICON_SETS["symbol"])  # current glyphs; see set_style()
 
 TABS = ["Tổng quan", "Giao dịch", "Dòng tiền", "Ngân sách"]
 TABS_SHORT = ["Tổng", "Giao", "Dòng", "Ngân"]
-TAB_ICONS = ["🏠", "💸", "🔁", "🎯"]
-CATEGORY_ICONS = [  # (accent-free keywords, icon); first match wins
-    (("an", "uong", "com", "pho", "cafe", "ca phe", "tra sua"), "🍜"),
-    (("nha", "thue nha", "tien nha"), "🏠"),
-    (("xang", "xe", "grab", "taxi"), "🛵"),
-    (("luong", "thuong"), "💰"),
-    (("mua", "shopping", "sam"), "🛒"),
-    (("hoc", "sach", "khoa hoc"), "📚"),
-    (("dien", "nuoc", "internet", "wifi"), "💡"),
-    (("claude", "app", "goi", "phan mem"), "💻"),
+CATEGORY_ICONS = [  # (accent-free keywords, emoji, symbol); first match wins
+    (("an", "uong", "com", "pho", "cafe", "ca phe", "tra sua"), "🍜", "♨"),
+    (("nha", "thue nha", "tien nha"), "🏠", "⌂"),
+    (("xang", "xe", "grab", "taxi"), "🛵", "⊙"),
+    (("luong", "thuong"), "💰", "★"),
+    (("mua", "shopping", "sam"), "🛒", "¤"),
+    (("hoc", "sach", "khoa hoc"), "📚", "§"),
+    (("dien", "nuoc", "internet", "wifi"), "💡", "↯"),
+    (("claude", "app", "goi", "phan mem"), "💻", "⚙"),
 ]
 TAB_CMDS = [("dash", {}), ("list", {"all": True}), ("plan list", {}), ("budget status", {})]
 AMOUNT_CHIPS = [(v, v) for v in ("50k", "100k", "200k", "500k", "1tr")]
@@ -92,10 +109,20 @@ DATE_FIELDS = ("date", "due")
 REQUIRED = ("name", "amount", "category")
 
 
+def set_style(ascii_only: bool, mode: str) -> None:
+    """Pick structural glyphs (Unicode or ASCII) and the icon set; ASCII terminals get no icons."""
+    global G, ASCII, ICON_MODE
+    ASCII, ICON_MODE = ascii_only, mode if mode in ICON_MODES else "symbol"
+    G = dict(ASCII_GLYPHS, **_ASCII_ICONS) if ascii_only else dict(UNICODE_GLYPHS, **ICON_SETS[ICON_MODE])
+
+
 def use_ascii(flag: bool) -> None:
     """Switch every glyph (icons, bars, kaomoji, pills) to plain ASCII."""
-    global G, ICONS
-    G, ICONS = (ASCII_GLYPHS, False) if flag else (UNICODE_GLYPHS, True)
+    set_style(flag, ICON_MODE)
+
+
+def set_icons(mode: str) -> None:
+    set_style(ASCII, mode)
 
 
 def _ascii_default() -> bool:
@@ -121,6 +148,7 @@ _TX_FIELDS = [_AMOUNT, _CATEGORY, Field("note", "Ghi chú", placeholder="(không
 FORMS = {
     "expense": ("Thêm khoản chi", _TX_FIELDS),
     "income": ("Thêm khoản thu", _TX_FIELDS),
+    "tx": ("Sửa giao dịch", _TX_FIELDS + [Field("kind", "Loại", KINDS)]),
     "plan": ("Thêm dòng tiền", [Field("name", "Tên", placeholder="vd: lương, thuê nhà"),
                                 _AMOUNT, _CATEGORY,
                                 Field("every", "Lặp", EVERY),
@@ -256,6 +284,7 @@ class Form:
         self.cats = cats
         self.today = today
         self.months = {}  # type: Dict[str, Tuple[int, int]]  # calendar month shown per date field
+        self.edit_id = None  # type: Optional[int]
 
     def kind(self) -> str:
         return self.values.get("kind") or self.name
@@ -338,9 +367,13 @@ class State:
         # animations: start times on the same clock as `now`
         self.now = 0.0
         self.toast = None  # type: Optional[Tuple[Any, float]]
-        self.sparkle = None  # type: Optional[Tuple[Any, float]]
+        self.sparkle = None  # type: Optional[Tuple[int, float]]  # (seed, start): sized to what it surrounds
         self.count = None  # type: Optional[Tuple[int, int, float]]
         self.bars_t0 = None  # type: Optional[float]
+        self.popup = None  # type: Optional[Tuple[Any, float]]
+        self.popup_args = {}  # type: Dict[str, Any]  # to rebuild the popup with shortened text
+        self.popup_fit = {}  # type: Dict[int, Any]  # inner width -> popup whose text fits
+        self.last_click = None  # type: Optional[Tuple[Action, float]]
 
     def items(self) -> List[Dict[str, Any]]:
         if self.tab not in (1, 2):
@@ -354,8 +387,9 @@ class State:
     def animating(self) -> bool:
         """True while any animation still has frames to draw at `now`."""
         t = self.now
-        return bool((self.toast and not self.toast[0].done(t - self.toast[1]))
-                    or (self.sparkle and not self.sparkle[0].done(t - self.sparkle[1]))
+        return bool((self.popup and t - self.popup[1] < _duration(self.popup[0]))
+                    or (self.toast and not self.popup and not self.toast[0].done(t - self.toast[1]))
+                    or (self.sparkle and t - self.sparkle[1] < SPARKLE_S)
                     or (self.count and t - self.count[2] < 0.6)
                     or (self.bars_t0 is not None and t - self.bars_t0 < 0.5))
 
@@ -402,16 +436,59 @@ def play(state: State, event: str) -> None:
             pass
 
 
+def _duration(popup: Any) -> float:
+    return float(getattr(popup, "duration", 1.6))
+
+
 def toast(state: State, message: str, kind: str = "success", sparkle: bool = False) -> None:
     if anim is None:
         return
-    state.toast = (anim.Toast(message, kind), state.now)
-    state.sparkle = (anim.Sparkle(44, 9, seed=int(state.now * 1000) & 0xFFFF), state.now) if sparkle else None
+    faces = G["toast"]
+    try:  # newer anim.py picks font-safe glyphs itself
+        state.toast = (anim.Toast(message, kind, icon=faces[kind] if faces else None, glyphs=G["popup"]), state.now)
+    except TypeError:
+        state.toast = (anim.Toast(message, kind, icon=faces[kind] if faces else None), state.now)
+    state.sparkle = (int(state.now * 1000) & 0xFFFF, state.now) if sparkle else None
+    state.popup = None
+
+
+def popup(state: State, icon: str, title: str, subtitle: str, message: str, kind: str = "success",
+          sparkle: bool = True) -> None:
+    """Centered pixel-art popup (anim.PixelPopup); the toast is kept as its fallback when it does not fit."""
+    toast(state, message, kind, sparkle)
+    pixel = getattr(anim, "PixelPopup", None) if anim is not None else None  # newer anim.py only
+    if pixel is None:
+        return
+    args = dict(icon=icon, title=title, subtitle=subtitle, glyphs=G["popup"], seed=int(state.now * 1000) & 0xFFFF)
+    try:
+        state.popup = (pixel(**args), state.now)
+    except Exception:  # an incompatible PixelPopup must never break saving
+        state.popup = None
+    state.popup_args, state.popup_fit = args, {}
+
+
+def _fitted_popup(state: State, width: int, height: int) -> Any:
+    """The popup, rebuilt (same seed, same timeline) with text shortened so amounts are never cut."""
+    pixel, args = state.popup[0], state.popup_args
+    size = getattr(pixel, "size", None)
+    if not size or not args:
+        return pixel
+    inner = size(width, height)[0] - 2
+    if cell_len(args["title"]) <= inner and cell_len(args["subtitle"]) <= inner:
+        return pixel
+    if inner not in state.popup_fit:
+        state.popup_fit[inner] = type(pixel)(**dict(args, title=fit_money(args["title"], inner),
+                                                    subtitle=fit_money(args["subtitle"], inner)))
+    return state.popup_fit[inner]
+
+
+def popup_active(state: State) -> bool:
+    return bool(state.popup and state.now - state.popup[1] < _duration(state.popup[0]))
 
 
 def fail(state: State, message: str) -> None:
     state.set_status(message, False)
-    toast(state, message, "error")
+    popup(state, "cross", message, "", message, "error", sparkle=False)
     play(state, "error")
 
 
@@ -420,15 +497,15 @@ def worrying(dash: Dict[str, Any]) -> bool:
     return low.get("balance", 0) < 0 or any(float(b.get("pct", 0)) >= 100 for b in dash.get("budgets") or [])
 
 
-def celebrate(state: State, api: ApiCall, message: str, event: str, kind: str = "success",
-              sparkle: bool = True) -> None:
-    """After a successful change: reload, tick the balance, pop a toast and play a sound."""
+def celebrate(state: State, api: ApiCall, message: str, event: str, icon: str, title: str, subtitle: str,
+              kind: str = "success", sparkle: bool = True) -> None:
+    """After a successful change: reload, tick the balance, pop the pixel popup and play a sound."""
     before = state.balance
     refresh(state, api)
     if before is not None and state.balance is not None and before != state.balance:
         state.count = (before, state.balance, state.now)
     state.set_status(message)
-    toast(state, message, kind, sparkle)
+    popup(state, icon, title, subtitle, message, kind, sparkle)
     play(state, "warn" if event == "save" and worrying(state.dash) else event)
 
 
@@ -480,19 +557,19 @@ def _plain(s: str) -> str:
     return "".join(c for c in s if not unicodedata.combining(c))
 
 
-def category_icon(name: str) -> str:
+def category_icon(name: str, mode: Optional[str] = None) -> str:
     words = " %s " % " ".join(_plain(name).split())
-    for keys, icon in CATEGORY_ICONS:
+    for keys, emoji, symbol in CATEGORY_ICONS:
         if any(" %s " % k in words for k in keys):
-            return icon
+            return emoji if (mode or ICON_MODE) == "emoji" else symbol
     return "•"
 
 
 def cat_label(name: str) -> str:
-    if not ICONS:
+    if not G["w"]:
         return name
     icon = category_icon(name)
-    return "%s%s %s" % (icon, " " if cell_len(icon) == 1 else "", name)  # icons padded to 2 cells
+    return "%s%s %s" % (icon, " " * (G["w"] - cell_len(icon)), name)  # icons padded to the set's width
 
 
 def date_chips(today: date) -> List[Tuple[str, str]]:
@@ -562,17 +639,21 @@ def tabs_line(active: int, width: int) -> Line:
         def build() -> Line:
             ln = Line().add(" ")
             for i, name in enumerate(labels):
-                icon = TAB_ICONS[i] + " " if icons and ICONS else ""
+                icon = G["tabs"][i] + " " if icons and G["tabs"][i] else ""
                 text = (" %s%s " % (icon, name)) if name or not icon else " %s" % icon
                 ln.pill([(text, TAB_ON if i == active else TAB_OFF)], ("tab", i),
                         ACCENT if i == active else "#2a2448", caps).add(gap)
             return ln
         return build
-    icon_only = [TABS_SHORT[i] if i == active else "" for i in range(4)]
+    icon_only = [TABS_SHORT[i] if i == active or not G["tabs"][i] else "" for i in range(4)]
     digits = [str(i + 1) for i in range(4)]
-    return fit([make(TABS, True, True), make(TABS, True, False), make(TABS_SHORT, True, True),
-                make(TABS_SHORT, True, False), make(icon_only, True, False),
-                make(digits, False, False, "")], width)
+    ln = fit([make(TABS, True, True), make(TABS, True, False), make(TABS_SHORT, True, True),
+              make(TABS_SHORT, True, False), make(icon_only, True, False),
+              make(digits, False, False, "")], width)
+    label = " Icon: %s I " % ICON_MODE
+    if ln.x + cell_len(label) + 1 <= width:  # icon style switch, right-aligned when there is room
+        ln.add(" " * (width - ln.x - cell_len(label) - 1)).click(label, ("key", "I"), MUTED)
+    return ln
 
 
 def action_line(state: State, width: int) -> Line:
@@ -585,6 +666,9 @@ def action_line(state: State, width: int) -> Line:
     else:
         buttons = [("+ Chi", "+Chi", "a", "a", False), ("+ Thu", "+Thu", "i", "i", False),
                    ("+ Dòng tiền", "+Dòng", "p", "p", False)]
+        if state.selected is not None and state.tab in (1, 2):
+            edit = ("%s Sửa" % G["edit"]).strip()
+            buttons.append((edit, G["edit"] or "Sửa", "e", "e", False))
         if state.selected is not None and state.tab == 2:
             buttons.append(("%s Xong" % G["done"], G["done"], "d", "d", False))
         if state.selected is not None and state.tab == 1:
@@ -977,8 +1061,58 @@ def put(line: Text, x: int, piece: Text) -> Text:
     return out
 
 
+_SAFE_SPARKS = "*+·"
+_RISKY_SPARKS = set("✦✧⋆˚♡✿")
+
+
+def _sparkles(state: State, lines: List[Text], width: int, height: int, avoid: Tuple[int, int, int, int]) -> None:
+    """Confetti bursting out of the box `avoid` (top, left, bottom, right), never drawn inside it."""
+    if not state.sparkle:
+        return
+    seed, t0 = state.sparkle
+    bh, bw = avoid[2] - avoid[0], avoid[3] - avoid[1]
+    try:
+        sp = anim.Sparkle(bw + 20, bh + 8, seed=seed, duration=SPARKLE_S, glyphs=G["popup"])
+    except TypeError:  # older anim.py: no glyph modes
+        sp = anim.Sparkle(bw + 20, bh + 8, seed=seed, duration=SPARKLE_S)
+    area_top, area_left = avoid[0] - 4, avoid[1] - 10
+    for r, c, ch, style in sp.cells(state.now - t0):
+        row, col = area_top + r, area_left + c
+        inside = avoid[0] <= row < avoid[2] and avoid[1] <= col < avoid[3]
+        if 2 <= row < height - 2 and 0 <= col < width and not inside:
+            if ICON_MODE != "emoji" and ch in _RISKY_SPARKS:  # not in every monospace font
+                ch = _SAFE_SPARKS[(r + c) % len(_SAFE_SPARKS)]
+            lines[row] = put(lines[row], col, Text(ch, style=style))
+
+
+def _draw_popup(state: State, lines: List[Text], width: int, height: int) -> bool:
+    """Pixel popup centered over the body; False when there is none or it does not fit (toast fallback)."""
+    t0 = state.popup[1]
+    try:
+        fr = _fitted_popup(state, width, max(0, height - 4)).frame(state.now - t0, width, max(0, height - 4))
+    except Exception:
+        fr = None
+    if not fr:
+        return False
+    top, left, box = fr
+    top += 2  # frame() is relative to the body area
+    box = box[:max(0, height - 2 - top)]
+    bw = max((b.cell_len for b in box), default=0)
+    _sparkles(state, lines, width, height, (top, left, top + len(box), left + bw))
+    for i, b in enumerate(box):
+        if 0 <= top + i < len(lines):
+            lines[top + i] = put(lines[top + i], max(0, left), b)
+    return True
+
+
 def apply_overlays(state: State, lines: List[Text], hits: List[Hit], width: int, height: int) -> List[Hit]:
-    """Draw the toast (bottom-right, above the action bar) and its sparkles; the toast swallows clicks."""
+    """Draw the pixel popup, or the toast (bottom-right, above the action bar) with its sparkles.
+    The toast swallows clicks on itself; a popup is dismissed by any click (see dispatch)."""
+    if state.popup:
+        if not popup_active(state):
+            return hits  # popup finished: its fallback toast is over too
+        if _draw_popup(state, lines, width, height):
+            return hits
     if not state.toast:
         return hits
     t = state.now - state.toast[1]
@@ -988,7 +1122,8 @@ def apply_overlays(state: State, lines: List[Text], hits: List[Hit], width: int,
     kao = toast_._kaomoji(anim.ascii_mode()) if hasattr(toast_, "_kaomoji") else ""
     room = box_w - 4 - (cell_len(kao) + 2 if kao else 0) - 2
     if cell_len(toast_.message) > room:
-        toast_ = anim.Toast(fit_money(toast_.message, room), toast_.kind, toast_.icon, toast_.duration)
+        extra = {"glyphs": toast_.glyphs} if hasattr(toast_, "glyphs") else {}
+        toast_ = anim.Toast(fit_money(toast_.message, room), toast_.kind, toast_.icon, toast_.duration, **extra)
     box = toast_.lines(t, box_w)
     top = height - 2 - len(box)
     if not box or top < 2:
@@ -996,14 +1131,7 @@ def apply_overlays(state: State, lines: List[Text], hits: List[Hit], width: int,
     tw = max(b.cell_len for b in box)
     x0 = max(0, width - tw - 1)
     blocked = []  # type: List[Hit]
-    if state.sparkle:
-        sp, t0 = state.sparkle
-        area_top, area_left = top + len(box) // 2 - sp.height // 2, x0 + tw // 2 - sp.width // 2
-        for r, c, ch, style in sp.cells(state.now - t0):
-            row, col = area_top + r, area_left + c
-            inside = top <= row < top + len(box) and x0 <= col < x0 + tw
-            if 2 <= row < height - 2 and 0 <= col < width and not inside:
-                lines[row] = put(lines[row], col, Text(ch, style=style))
+    _sparkles(state, lines, width, height, (top, x0, top + len(box), x0 + tw))
     for i, b in enumerate(box):
         left = 1 if x0 > 0 else 0  # one blank cell around the box so no stray glyphs touch its border
         right = 1 if x0 + b.cell_len < width else 0
@@ -1062,9 +1190,15 @@ def validate(form: Form, today: date) -> Tuple[str, Dict[str, Any], Dict[str, st
         except ValueError:
             errors[key] = "Ngày không hợp lệ (vd: 06/11/2026, 2026-11-06, +3)"
     if form.name == "plan":
+        if form.edit_id is not None:
+            params.update(id=form.edit_id, every=v["every"], kind=v["kind"])
+            return "plan edit", params, errors
         params.update(every=v["every"], income=v["kind"] == "income")
         return "plan add", params, errors
     params["note"] = v["note"]
+    if form.name == "tx":
+        params.update(id=form.edit_id, kind=v["kind"])
+        return "edit", params, errors
     return form.name, params, errors
 
 
@@ -1079,21 +1213,65 @@ def refresh(state: State, api: ApiCall) -> None:
 
 
 def init(state: State, api: ApiCall) -> None:
-    """First load: overview data, stored sound setting, bars filling in."""
+    """First load: overview data, stored sound and icon settings ($ECO_ICONS wins), bars filling in."""
     load(state, api)
     try:
         state.sound = bool(api("sound", {}).get("sound", True))
     except Exception:
         pass
+    mode = os.environ.get("ECO_ICONS", "")
+    if mode not in ICON_MODES:
+        try:
+            mode = api("icons", {}).get("icons", "symbol")
+        except Exception:
+            mode = "symbol"
+    set_icons(mode)
     state.bars_t0 = state.now
 
 
-def open_form(state: State, name: str, api: ApiCall) -> None:
+def open_form(state: State, name: str, api: ApiCall) -> Form:
     try:
         cats = api("categories", {})
     except Exception:
         cats = {}
     state.form = Form(name, cats, state.today)
+    return state.form
+
+
+def _amount_text(amount: int) -> str:
+    return money(amount)[:-2]  # "50.000": parse_money reads dotted thousands
+
+
+def open_edit(state: State, api: ApiCall) -> None:
+    """Form pre-filled with the selected transaction / dòng tiền."""
+    items = state.items()
+    if state.tab not in (1, 2) or state.selected is None or state.selected >= len(items):
+        return
+    item = items[state.selected]
+    if state.tab == 1:
+        form = open_form(state, "tx", api)
+        form.values.update(amount=_amount_text(item["amount"]), category=item["category"],
+                           note=item.get("note", ""), date=_dmy(date.fromisoformat(item["date"])), kind=item["kind"])
+        form.title = "Sửa giao dịch #%d" % item["id"]
+    else:
+        form = open_form(state, "plan", api)
+        form.values.update(name=item["name"], amount=_amount_text(item["amount"]), category=item["category"],
+                           every=item.get("recurrence") or "once", day=str(item.get("day") or ""),
+                           due=_dmy(date.fromisoformat(item["due_date"])), kind=item["kind"])
+        form.title = "Sửa dòng tiền #%d" % item["id"]
+    form.edit_id = item["id"]
+
+
+def cycle_icons(state: State, api: ApiCall) -> None:
+    mode = ICON_MODES[(ICON_MODES.index(ICON_MODE) + 1) % len(ICON_MODES)]
+    try:
+        mode = api("icons", {"mode": mode}).get("icons", mode)
+    except Exception as e:
+        fail(state, str(e))
+        return
+    set_icons(mode)
+    state.set_status("Icon: %s" % mode)
+    toast(state, state.status[0], "info")
 
 
 def submit(state: State, api: ApiCall) -> None:
@@ -1111,11 +1289,15 @@ def submit(state: State, api: ApiCall) -> None:
         fail(state, str(e))
         return
     state.form = None
-    income = params.get("income") or cmd == "income"
-    what = {"plan add": "dòng tiền", "expense": "khoản chi", "income": "khoản thu"}[cmd]
+    income = params.get("income") or params.get("kind") == "income" or cmd == "income"
     amount = money(params["amount"] if income else -params["amount"], signed=True)
-    celebrate(state, api, "Đã lưu %s %s %s %s" % (what, G["ok"], params.get("name") or params["category"], amount),
-              "save")
+    item = "%s %s" % (params.get("name") or params["category"], amount)
+    if cmd in ("edit", "plan edit"):
+        what = "giao dịch #%d" % params["id"] if cmd == "edit" else "dòng tiền"
+        celebrate(state, api, "Đã sửa %s %s %s" % (what, G["ok"], item), "save", "pencil", "Đã sửa!", item)
+        return
+    what = {"plan add": "dòng tiền", "expense": "khoản chi", "income": "khoản thu"}[cmd]
+    celebrate(state, api, "Đã lưu %s %s %s" % (what, G["ok"], item), "save", "check", "Đã lưu!", item)
 
 
 def toggle_sound(state: State, api: ApiCall) -> None:
@@ -1178,7 +1360,8 @@ def handle_key(state: State, key: str, api: ApiCall) -> None:
                 fail(state, str(e))
                 return
             state.selected = None
-            celebrate(state, api, "Đã xoá giao dịch #%d" % tid, "delete", "info", sparkle=False)
+            celebrate(state, api, "Đã xoá giao dịch #%d" % tid, "delete", "trash", "Đã xoá", "giao dịch #%d" % tid,
+                      "info", sparkle=False)
         elif key in ("n", "esc"):
             state.confirm = None
             state.set_status("Không xoá")
@@ -1198,6 +1381,10 @@ def handle_key(state: State, key: str, api: ApiCall) -> None:
         state.selected = None
     elif key == "m":
         toggle_sound(state, api)
+    elif key == "I":
+        cycle_icons(state, api)
+    elif key == "e":
+        open_edit(state, api)
     elif key in ("a", "i", "p"):
         open_form(state, {"a": "expense", "i": "income", "p": "plan"}[key], api)
     elif key == "d" and state.tab == 2 and state.selected is not None:
@@ -1208,8 +1395,9 @@ def handle_key(state: State, key: str, api: ApiCall) -> None:
             fail(state, str(e))
             return
         income = p["kind"] == "income"
-        celebrate(state, api, "%s %s %s %s" % ("Đã nhận" if income else "Đã thanh toán", G["ok"], p["name"],
-                                              money(p["amount"] if income else -p["amount"], signed=True)), "done")
+        item = "%s %s" % (p["name"], money(p["amount"] if income else -p["amount"], signed=True))
+        title = "Đã nhận!" if income else "Đã thanh toán!"
+        celebrate(state, api, "%s %s %s" % (title[:-1], G["ok"], item), "done", "coin", title, item)
     elif key == "x" and state.tab == 1 and state.selected is not None:
         t = items[state.selected]
         state.confirm = {"id": t["id"], "label": "%s %s ngày %s" % (t["category"], money(t["amount"]),
@@ -1228,13 +1416,20 @@ def handle_click(state: State, x: int, y: int, api: ApiCall) -> None:
     elif kind == "key":
         handle_key(state, action[1], api)
     elif kind == "select" and not state.confirm:
-        state.selected = action[1]
+        last, state.last_click = state.last_click, (action, state.now)
+        if state.selected == action[1] and last and last[0] == action and state.now - last[1] < 0.4:
+            state.last_click = None
+            open_edit(state, api)  # double click
+        else:
+            state.selected = action[1]
     elif kind == "focus" and state.form:
         state.form.focus = action[1]
     elif kind == "chip" and state.form:
         form, key = state.form, action[1]
         form.values[key] = action[2]
         form.errors.pop(key, None)
+        if key == "day" and form.edit_id is not None:
+            form.values["due"] = ""  # editing: let the api move the due date to the new day
         # jump to the next required field still empty, so "click category, type amount, Enter" works
         form.focus = next((f.key for f in form.visible() if f.key in REQUIRED and not form.values[f.key]), key)
     elif kind == "cal" and state.form:
@@ -1249,6 +1444,10 @@ def handle_click(state: State, x: int, y: int, api: ApiCall) -> None:
 def dispatch(state: State, event: Event, api: ApiCall) -> None:
     if not event or event in ("tick", "resize"):
         return
+    if popup_active(state):  # any input dismisses the popup; clicks only dismiss, keys still act
+        state.popup = state.toast = state.sparkle = None
+        if isinstance(event, tuple):
+            return
     if isinstance(event, tuple):
         _, b, x, y = event
         b &= ~0b11100  # drop shift/meta/ctrl bits

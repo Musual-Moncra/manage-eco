@@ -79,6 +79,19 @@ class Store:
             for r in rows
         ]
 
+    def get_transaction(self, tid: int) -> Optional[Transaction]:
+        r = self.conn.execute("SELECT * FROM transactions WHERE id = ?", (tid,)).fetchone()
+        if r is None:
+            return None
+        return Transaction(date.fromisoformat(r["date"]), r["amount"], r["kind"], r["category"], r["note"], r["id"])
+
+    def update_transaction(self, t: Transaction) -> None:
+        self.conn.execute(
+            "UPDATE transactions SET date=?, amount=?, kind=?, category=?, note=? WHERE id=?",
+            (t.date.isoformat(), t.amount, t.kind, t.category, t.note, t.id),
+        )
+        self.conn.commit()
+
     def delete_transaction(self, tid: int) -> bool:
         cur = self.conn.execute("DELETE FROM transactions WHERE id = ?", (tid,))
         self.conn.commit()

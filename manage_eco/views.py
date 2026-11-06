@@ -169,6 +169,16 @@ def render(cmd: str, d: dict):
             title="Mục tiêu tiết kiệm", box=box.ROUNDED, border_style=ACCENT, expand=False)
     if cmd == "dash":
         return dashboard(d)
+    if cmd == "edit":
+        x = d["transaction"]
+        return Text.from_markup("✓ Đã sửa #%d  %s  %s  %s   ·   Số dư: %s"
+                                % (x["id"], x["date"], x["category"], _signed(x["signed"]), _bal(d["balance"])))
+    if cmd == "plan edit":
+        p = d["plan"]
+        return Text.from_markup("✓ Đã sửa dòng tiền #%d  %s  %s  (đến hạn %s)"
+                                % (p["id"], p["name"], money(p["amount"]), p["due_date"]))
+    if cmd == "icons":
+        return Text("Kiểu icon: %s" % d["icons"])
     if cmd == "sound":
         return Text.from_markup("Âm thanh: %s" % ("[%s]🔊 bật[/]" % INC if d["sound"] else "[dim]🔇 tắt[/]"))
     if cmd == "categories":

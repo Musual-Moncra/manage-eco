@@ -48,17 +48,18 @@ Các cờ toàn cục có thể đặt trước bất kỳ lệnh con nào của
 Gõ `eco` (hoặc `eco ui`) để mở. **Mọi thao tác đều bấm chuột được** — không cần nhớ phím:
 
 - **4 tab** ở dòng trên cùng: Tổng quan · Giao dịch · Dòng tiền · Ngân sách — nhấp để chuyển.
-- **Nút hành động** ở dòng dưới cùng: `+ Chi` `+ Thu` `+ Dòng tiền`, khi chọn một dòng có thêm `✓ Xong` / `✕ Xoá`, và `Thoát`.
+- **Nút hành động** ở dòng dưới cùng: `+ Chi` `+ Thu` `+ Dòng tiền`; khi chọn một dòng có thêm `✎ Sửa` / `✓ Xong` / `✕ Xoá`, và `Thoát`.
 - **Form thêm**: nhấp số tiền gợi ý (`50k` … `1tr`) và danh mục hay dùng; ô ngày có chip nhanh `[Hôm qua][Hôm nay][Mai][Cuối tháng][Đầu tháng sau]`, lịch tháng bấm được (‹ › đổi tháng) và dòng xem trước `→ Thứ 6, 13/11/2026`; số tiền cũng hiện xem trước (`= 70.000 ₫`). Nhấp `Lưu`.
 - Nhấp vào một dòng để chọn, lăn chuột để cuộn.
 
-Phím tắt (luôn ghi sẵn trên từng nút): `1`–`4` tab · `a` thêm chi · `i` thêm thu · `p` thêm dòng tiền · `d` xong · `x` xoá · `↑↓` chọn · `Enter` lưu · `Esc` huỷ · `q` thoát.
+Phím tắt (luôn ghi sẵn trên từng nút): `1`–`4` tab · `a` thêm chi · `i` thêm thu · `p` thêm dòng tiền · `e` sửa · `d` xong · `x` xoá · `↑↓` chọn · `Enter` lưu · `Esc` huỷ · `q` thoát.
 
 ### Giao diện
 
 - **Co giãn theo terminal**: dưới 60 cột dùng bố cục gọn (icon + nhãn ngắn, một cột); 60–119 cột một cột; từ 120 cột tab Tổng quan chia hai cột (Ngân sách | Sắp tới) và danh sách có thêm Ghi chú/Lặp; từ 160 cột thêm sparkline số dư 30 ngày. Không vỡ layout xuống 40×12.
 - **Animation**: lưu khoản chi/thu/dòng tiền hiện toast pastel bo tròn + sparkle và số dư nhảy theo; `✓ Xong` hiện toast "Đã thanh toán…"; lỗi hiện toast lỗi. Khi rảnh TUI chờ input hoàn toàn (0% CPU, không redraw).
 - **Âm thanh (SFX)**: nút `🔊/🔇` hoặc phím `m` bật/tắt và ghi nhớ lựa chọn. Tiếng phát khi lưu, `✓ Xong`, xoá, lỗi, chuyển tab, và cảnh báo (lưu xong làm dự báo âm tiền hoặc ngân sách ≥100%). Tắt tạm thời bằng `ECO_SOUND=0`.
+- **Icon an toàn**: `eco icons symbol|emoji|off` — mặc định `symbol` (glyph đơn ô, hiển thị tốt trên mọi terminal monospace); `ECO_ICONS` ghi đè cho một lần chạy.
 - **ASCII**: đặt `ECO_ASCII=1` (hoặc `TERM=linux`/`dumb`) để thay emoji/kaomoji bằng ký tự ASCII.
 
 ---
@@ -186,6 +187,40 @@ eco sound on       # bật lại
 
 Với `--json`, kết quả là `{"ok": true, "command": "sound", "data": {"sound": true}}`.
 Trong TUI, bấm nút `🔊/🔇` hoặc nhấn `m` để đổi và ghi nhớ; `ECO_SOUND=0` tắt tạm mà không đổi cài đặt.
+
+### 9. Sửa giao dịch (`eco edit`)
+
+```bash
+eco edit 1 --amount 200k -n "Phở bò"
+eco edit 1 -n ""              # xoá ghi chú
+eco edit 1 --kind income      # đổi loại; số dư cập nhật
+eco edit 1 --category "an uong" -d 06/11/2026
+```
+
+Chỉ các trường được nêu thay đổi. ID không tồn tại → exit 1; số tiền không hợp lệ → exit 2.
+Trong TUI, chọn dòng rồi bấm `✎ Sửa` (phím `e`).
+
+### 10. Sửa dòng tiền (`eco plan edit`)
+
+```bash
+eco plan edit 1 --amount 6tr --name "Tiền nhà mới"
+eco plan edit 1 --every monthly --day 5   # cố định ngày 5, tự tính ngày đến hạn
+eco plan edit 1 --every weekly            # đổi sang hàng tuần, xoá --day
+```
+
+Chỉ các trường được nêu thay đổi; `--day` chỉ dùng với `--every monthly` (lặp khác → exit 2).
+Trong TUI, chọn dòng tiền rồi bấm `✎ Sửa` (phím `e`).
+
+### 11. Kiểu icon (`eco icons`)
+
+```bash
+eco icons             # xem (mặc định symbol)
+eco icons emoji       # bộ emoji đầy đủ
+eco icons off         # ẩn icon
+```
+
+`symbol` dùng glyph đơn ô, an toàn khi emoji hiện thành ô vuông; `ECO_ICONS` ghi đè cho một lần chạy.
+Với `--json`: `{"ok": true, "command": "icons", "data": {"icons": "symbol"}}`.
 
 ---
 

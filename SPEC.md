@@ -72,3 +72,9 @@ Commands → data:
 - `sfx.play(event, enabled=True) -> bool` non-blocking; events `save | done | delete | error | tab | warn`. Synthesized WAVs cached in `~/Library/Caches/manage_eco/sfx` (or `$XDG_CACHE_HOME`). Player: afplay / paplay / pw-play / aplay; none → terminal bell for `error` only. Debounced, ≤4 concurrent players.
 - Mute: `ECO_SOUND=0`, or stored setting: `eco sound on|off` → api `sound` `{state?}` → `{sound: bool}` (default on). `Store.get_setting/set_setting`.
 - TUI (claude-2): play `save` on add, `done` on ✓ Xong, `delete` on xoá, `error` on error toast, `tab` on tab switch, `warn` when a save makes the forecast negative or a budget ≥100%. A `🔊/🔇  m` button toggles and persists via api `sound`.
+
+## v6: edit + safe icons (user: "có mấy cái hiện icon mà tôi không thấy", "không thể chỉnh sửa giao dịch nếu lỡ nhập sai")
+- `edit ID [--amount] [--category] [-n NOTE] [-d DATE] [--kind income|expense]` → `{transaction, balance}`; only given fields change (`note` may be ""). not found → exit 1.
+- `plan edit ID [--name] [--amount] [--category] [--due] [--every] [--day] [--kind]` → `{plan}`; `--every` non-monthly clears `day`; `--day` without `--due` moves due to next day N.
+- `Store.get_transaction/update_transaction`.
+- `icons [symbol|emoji|off]` → `{icons: mode}`, default **symbol** (stored setting; env `ECO_ICONS` overrides). symbol = BMP glyphs present in standard monospace fonts, single cell wide, no emoji; emoji = v5 set; off = no icons.

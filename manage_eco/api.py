@@ -95,6 +95,40 @@ def rm(params, store, today):
     return {"deleted": tid, "balance": store.balance()}
 
 
+def _kind(v: Any) -> str:
+    v = str(v).lower()
+    if v in ("income", "thu"):
+        return INCOME
+    if v in ("expense", "chi"):
+        return EXPENSE
+    raise ValueError("loại phải là income|expense")
+
+
+def _given(params: dict, key: str) -> bool:
+    return params.get(key) not in (None, "")
+
+
+def edit(params, store, today):
+    """Change fields of a transaction; only the given keys change (note may be set to "")."""
+    _require(params, "id")
+    tid = int(params["id"])
+    t = store.get_transaction(tid)
+    if t is None:
+        raise LookupError("không tìm thấy giao dịch #%d" % tid)
+    if _given(params, "amount"):
+        t.amount = _amount(params["amount"])
+    if _given(params, "category"):
+        t.category = str(params["category"])
+    if params.get("note") is not None:
+        t.note = str(params["note"])
+    if _given(params, "date"):
+        t.date = _date(params["date"], today)
+    if _given(params, "kind"):
+        t.kind = _kind(params["kind"])
+    store.update_transaction(t)
+    return {"transaction": tx_dict(t), "balance": store.balance()}
+
+
 def summary(params, store, today):
     y, m = _month(params.get("month"), today)
     start, end = cashflow.month_range(y, m)
@@ -160,6 +194,40 @@ def plan_cancel(params, store, today):
     _plan_or_raise(store, pid)
     plans.cancel_plan(store, pid)
     return {"plan": plan_dict(store.get_plan(pid))}
+
+
+def plan_edit(params, store, today):
+    """Change fields of a dòng tiền; only the given keys change."""
+    _require(params, "id")
+    pid = int(params["id"])
+    p = _plan_or_raise(store, pid)
+    if _given(params, "name"):
+        p.name = str(params["name"])
+    if _given(params, "amount"):
+        p.amount = _amount(params["amount"])
+    if _given(params, "category"):
+        p.category = str(params["category"])
+    if _given(params, "kind"):
+        p.kind = _kind(params["kind"])
+    if _given(params, "every"):
+        if params["every"] not in RECURRENCES:
+            raise ValueError("--every phải là %s" % "|".join(RECURRENCES))
+        p.recurrence = params["every"]
+        if p.recurrence != MONTHLY:
+            p.day = None
+    if _given(params, "day"):
+        day = int(params["day"])
+        if p.recurrence != MONTHLY:
+            raise ValueError("--day chỉ dùng với --every monthly")
+        if not 1 <= day <= 31:
+            raise ValueError("--day phải từ 1 đến 31")
+        p.day = day
+        if not _given(params, "due"):
+            p.due_date = _next_day_of_month(day, today)
+    if _given(params, "due"):
+        p.due_date = _date(params["due"], today)
+    store.update_plan(p)
+    return {"plan": plan_dict(p)}
 
 
 def budget_set(params, store, today):
@@ -236,11 +304,25 @@ def sound(params, store, today):
     return {"sound": store.get_setting("sound", "on") == "on"}
 
 
+ICON_MODES = ("symbol", "emoji", "off")
+
+
+def icons(params, store, today):
+    """Get or set the TUI icon style: params {"mode": "symbol"|"emoji"|"off"} or {} to read."""
+    mode = params.get("mode")
+    if mode not in (None, ""):
+        if mode not in ICON_MODES:
+            raise ValueError("icons phải là %s" % "|".join(ICON_MODES))
+        store.set_setting("icons", mode)
+    return {"icons": store.get_setting("icons", "symbol")}
+
+
 COMMANDS = {
     "income": income, "expense": expense, "list": list_, "rm": rm, "summary": summary,
     "plan add": plan_add, "plan list": plan_list, "plan done": plan_done, "plan cancel": plan_cancel,
+    "edit": edit, "plan edit": plan_edit,
     "budget set": budget_set, "budget status": budget_status,
-    "forecast": forecast, "goal": goal, "dash": dash, "categories": categories, "sound": sound,
+    "forecast": forecast, "goal": goal, "dash": dash, "categories": categories, "sound": sound, "icons": icons,
 }  # type: Dict[str, Callable[[dict, Any, date], dict]]
 
 

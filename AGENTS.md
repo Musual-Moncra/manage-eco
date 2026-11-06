@@ -120,6 +120,21 @@ python3 -m manage_eco --json --db eco.db --today 2026-11-06 rm 1
 {"ok": true, "command": "rm", "data": {"deleted": 1, "balance": 0}}
 ```
 
+### `edit ID [--amount AMOUNT] [--category CATEGORY] [-n NOTE] [-d DATE] [--kind income|expense]`
+
+```bash
+python3 -m manage_eco --json --db eco.db --today 2026-11-06 \
+  edit 1 --amount 200000 -n "pho"
+```
+
+```json
+{"ok": true, "command": "edit", "data": {"transaction": {"id": 1, "date": "2026-11-01", "amount": 200000, "kind": "expense", "category": "food", "note": "pho", "signed": -200000}, "balance": 19800000}}
+```
+
+Only the given fields change; `-n ""` clears the note, and `--kind` flips
+`signed`/balance. Not found → exit 1, bad amount → exit 2. In the TUI, select a
+row and use the `✎ Sửa e` button (key `e`).
+
 ### `summary [--month YYYY-MM]`
 
 ```bash
@@ -189,6 +204,21 @@ python3 -m manage_eco --json --db eco.db --today 2026-11-06 plan cancel 1
 ```json
 {"ok": true, "command": "plan cancel", "data": {"plan": {"id": 1, "name": "Rent", "amount": 25000000, "kind": "expense", "due_date": "2026-12-01", "category": "housing", "recurrence": "monthly", "status": "cancelled", "day": null}}}
 ```
+
+### `plan edit ID [--name] [--amount] [--category] [--due] [--every] [--day] [--kind]`
+
+```bash
+python3 -m manage_eco --json --db eco.db --today 2026-11-06 \
+  plan edit 1 --amount 30000000 --day 20
+```
+
+```json
+{"ok": true, "command": "plan edit", "data": {"plan": {"id": 1, "name": "Rent", "amount": 30000000, "kind": "expense", "due_date": "2026-11-20", "category": "housing", "recurrence": "monthly", "status": "pending", "day": 20}}}
+```
+
+Only given fields change. `--every` other than `monthly` clears `day`; `--day`
+without `--due` moves the due date to the next day N; `--day` with a
+non-monthly recurrence → exit 2. TUI: `✎ Sửa e` on a selected dòng tiền.
 
 ### `budget set CATEGORY AMOUNT`
 
@@ -281,6 +311,22 @@ TUI, the `🔊/🔇` button or `m` toggles it; `ECO_SOUND=0` mutes only for that
 run. Sounds play on save, done, delete, error, tab switch, and warn (a save
 that makes the forecast negative or a budget ≥100%).
 
+### `icons [symbol|emoji|off]`
+
+```bash
+python3 -m manage_eco --json --db eco.db icons         # read
+python3 -m manage_eco --json --db eco.db icons emoji   # set
+```
+
+```json
+{"ok": true, "command": "icons", "data": {"icons": "emoji"}}
+```
+
+Reads or persists the TUI icon style. Default `symbol`: plain single-cell
+glyphs that render in standard monospace terminals (safe when emoji show as
+boxes). `emoji` uses the v5 emoji set; `off` hides icons. `ECO_ICONS` overrides
+the stored setting for one run. Invalid mode → exit 2.
+
 ## Python API
 
 `manage_eco.api.execute(cmd, params, store, today)` returns the same `data`
@@ -310,7 +356,8 @@ print(execute("dash", {}, store, today))
 
 Params mirror the CLI arguments: `amount`, `category`, `note`, `date`, `id`,
 `month`, `all`, `name`, `due`, `every`, `day`, `income`, `target`, `by`, `days`,
-`state` (`sound`: `"on"`/`"off"`, omitted to read).
+`state` (`sound`: `"on"`/`"off"`, omitted to read), `mode` (`icons`:
+`"symbol"`/`"emoji"`/`"off"`, omitted to read).
 `store` is a `manage_eco.db.Store`; `today` is a `datetime.date`.
 
 ## Memory

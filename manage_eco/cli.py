@@ -34,6 +34,14 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("rm", help="xoá giao dịch")
     s.add_argument("id", type=int)
 
+    s = sub.add_parser("edit", help="sửa giao dịch (chỉ đổi các trường được nêu)")
+    s.add_argument("id", type=int)
+    s.add_argument("--amount")
+    s.add_argument("--category")
+    s.add_argument("-n", "--note")
+    s.add_argument("-d", "--date")
+    s.add_argument("--kind", choices=["income", "expense"])
+
     s = sub.add_parser("summary", help="tổng kết thu/chi theo tháng")
     s.add_argument("--month")
 
@@ -55,6 +63,15 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("-d", "--date")
     s = psub.add_parser("cancel")
     s.add_argument("id", type=int)
+    s = psub.add_parser("edit", help="sửa dòng tiền (chỉ đổi các trường được nêu)")
+    s.add_argument("id", type=int)
+    s.add_argument("--name")
+    s.add_argument("--amount")
+    s.add_argument("--category")
+    s.add_argument("--due")
+    s.add_argument("--every", choices=["once", "daily", "weekly", "monthly"])
+    s.add_argument("--day", type=int)
+    s.add_argument("--kind", choices=["income", "expense"])
 
     budget = sub.add_parser("budget", help="ngân sách theo danh mục")
     bsub = budget.add_subparsers(dest="sub", required=True)
@@ -74,6 +91,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("dash", help="bảng tổng quan")
     sub.add_parser("categories", help="danh mục đã dùng (nhiều nhất trước)")
     sub.add_parser("ui", help="giao diện toàn màn hình (TUI)")
+    s = sub.add_parser("icons", help="kiểu icon trong TUI: symbol (mặc định) | emoji | off")
+    s.add_argument("mode", nargs="?", choices=["symbol", "emoji", "off"])
     s = sub.add_parser("sound", help="bật/tắt âm thanh hiệu ứng trong TUI")
     s.add_argument("state", nargs="?", choices=["on", "off"])
     return p
