@@ -67,3 +67,8 @@ Commands → data:
 - **Easier dates** (user request). `fmt.parse_date(s, today)` additionally accepts (case/diacritics-insensitive, e.g. "hom qua" = "hôm qua"):
   `hôm qua`/`qua`, `mai`/`ngày mai`, `mốt`/`ngày kia` (+2), `-N`/`+N` (days), `N` alone (1..31 → day N of this month, clamped), `D/M` or `D-M` (this year), `D/M/YY` (20YY), `thứ 2`..`thứ 7`/`t2`..`t7`, `chủ nhật`/`cn` (next such weekday, today excluded), `tuần sau` (+7), `tháng sau` (same day next month, clamped), `đầu tháng sau` (1st next month), `cuối tháng` (last day of this month). Existing formats unchanged. Also `date_preview(s, today) -> Optional[str]` → `"→ Thứ 6, 13/11/2026"` when parseable and not ISO, else None.
 - TUI date fields (owner claude-2): chips `[Hôm qua][Hôm nay][Mai][Cuối tháng][Đầu tháng sau]` plus a clickable mini month calendar (‹ › to change month; today and the selected day highlighted), live `date_preview` after the field.
+
+## v5: SFX (owner claude-1: `manage_eco/sfx.py`)
+- `sfx.play(event, enabled=True) -> bool` non-blocking; events `save | done | delete | error | tab | warn`. Synthesized WAVs cached in `~/Library/Caches/manage_eco/sfx` (or `$XDG_CACHE_HOME`). Player: afplay / paplay / pw-play / aplay; none → terminal bell for `error` only. Debounced, ≤4 concurrent players.
+- Mute: `ECO_SOUND=0`, or stored setting: `eco sound on|off` → api `sound` `{state?}` → `{sound: bool}` (default on). `Store.get_setting/set_setting`.
+- TUI (claude-2): play `save` on add, `done` on ✓ Xong, `delete` on xoá, `error` on error toast, `tab` on tab switch, `warn` when a save makes the forecast negative or a budget ≥100%. A `🔊/🔇  m` button toggles and persists via api `sound`.

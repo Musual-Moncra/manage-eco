@@ -2,13 +2,18 @@
 
 The screen is built as plain lines by pure functions that also record a hit map
 (row, x0, x1, action) for every clickable thing, so a click maps exactly to an
-action and everything is testable without a TTY.
+action and everything is testable without a TTY. Layout adapts to the terminal
+size on every frame; animations (anim.py) are overlays drawn on top of the
+finished lines, so they never shift the layout or the hit map. When nothing is
+animating the loop blocks on input: idle means zero redraws.
 """
 import calendar
 import os
 import select
 import signal
 import sys
+import time
+import unicodedata
 from datetime import date, timedelta
 from typing import Any, Callable, Dict, List, NamedTuple, Optional, Tuple, Union
 
@@ -18,27 +23,63 @@ from rich.text import Text
 from manage_eco import fmt
 from manage_eco.fmt import money, parse_date, parse_money
 
-# --- theme ---
-ACCENT = "#7dcfff"
-MUTED = "grey58"
-INCOME_C = "#9ece6a"
-EXPENSE_C = "#f7768e"
-WARN_C = "#e0af68"
-RULE_C = "#3b4261"
-SELECT_BG = "on #283457"
-BTN = "white on #2f3549"
-BTN_KEY = "bold %s on #2f3549" % ACCENT
-BTN_PRIMARY = "bold black on " + ACCENT
-BTN_PRIMARY_KEY = "black on " + ACCENT
-TAB_ON = "bold black on " + ACCENT
-TAB_OFF = "grey70 on #1f2335"
-CHIP = "grey85 on #2f3549"
-CHIP_ON = "bold black on " + INCOME_C
+try:
+    from manage_eco import anim
+except ImportError:  # animations are optional
+    anim = None  # type: ignore
+try:
+    from manage_eco import sfx
+except ImportError:  # sound is optional
+    sfx = None  # type: ignore
+
+# --- cute pastel theme ---
+ACCENT = "#c4b5fd"  # lavender
+PINK = "#f9a8d4"
+MUTED = "#a8a2c4"
+INCOME_C = "#86efac"  # mint
+EXPENSE_C = "#fca5a5"  # coral
+WARN_C = "#fdba74"  # peach
+RULE_C = "#4c4570"
+INK = "#1e1b2e"
+PILL = "#3b3363"
+SELECT_BG = "on #352d5c"
+BTN = "#ede9fe on " + PILL
+BTN_KEY = "bold %s on %s" % (PINK, PILL)
+BTN_PRIMARY = "bold %s on %s" % (INK, ACCENT)
+BTN_PRIMARY_KEY = "%s on %s" % (INK, ACCENT)
+TAB_ON = "bold %s on %s" % (INK, ACCENT)
+TAB_OFF = "#cfc8ef on #2a2448"
+CHIP = "#e9e5ff on " + PILL
+CHIP_ON = "bold %s on %s" % (INK, INCOME_C)
 
 MOUSE_ON = "\x1b[?1000h\x1b[?1006h"
 MOUSE_OFF = "\x1b[?1000l\x1b[?1006l"
+FRAME_S = 0.033  # select timeout while an animation is running
+
+UNICODE_GLYPHS = {"logo": "◆", "marker": "▸", "cursor": "▏", "rule": "─", "full": "█", "empty": "░", "ok": "✓",
+                  "err": "✗", "warn": "⚠", "late": "⏰", "arrow": "→", "prev": "‹", "next": "›", "cap_l": "▐",
+                  "cap_r": "▌", "done": "✓", "del": "✕", "spark": "▁▂▃▄▅▆▇█",
+                  "happy": "(◕‿◕)", "worried": "(・_・;)", "sad": "(｡•́︿•̀｡)", "sound_on": "🔊", "sound_off": "🔇"}
+ASCII_GLYPHS = {"logo": "*", "marker": ">", "cursor": "|", "rule": "-", "full": "#", "empty": ".", "ok": "v",
+                "err": "x", "warn": "!", "late": "!", "arrow": "->", "prev": "<", "next": ">", "cap_l": "",
+                "cap_r": "", "done": "v", "del": "x", "spark": "_.-:=+*#",
+                "happy": ":)", "worried": ":/", "sad": ":(", "sound_on": "Am", "sound_off": "Tat"}
+G = UNICODE_GLYPHS  # current glyph set; see use_ascii()
+ICONS = True
 
 TABS = ["Tổng quan", "Giao dịch", "Dòng tiền", "Ngân sách"]
+TABS_SHORT = ["Tổng", "Giao", "Dòng", "Ngân"]
+TAB_ICONS = ["🏠", "💸", "🔁", "🎯"]
+CATEGORY_ICONS = [  # (accent-free keywords, icon); first match wins
+    (("an", "uong", "com", "pho", "cafe", "ca phe", "tra sua"), "🍜"),
+    (("nha", "thue nha", "tien nha"), "🏠"),
+    (("xang", "xe", "grab", "taxi"), "🛵"),
+    (("luong", "thuong"), "💰"),
+    (("mua", "shopping", "sam"), "🛒"),
+    (("hoc", "sach", "khoa hoc"), "📚"),
+    (("dien", "nuoc", "internet", "wifi"), "💡"),
+    (("claude", "app", "goi", "phan mem"), "💻"),
+]
 TAB_CMDS = [("dash", {}), ("list", {"all": True}), ("plan list", {}), ("budget status", {})]
 AMOUNT_CHIPS = [(v, v) for v in ("50k", "100k", "200k", "500k", "1tr")]
 EVERY = [("once", "1 lần"), ("daily", "Hàng ngày"), ("weekly", "Hàng tuần"), ("monthly", "Hàng tháng")]
@@ -48,7 +89,19 @@ EVERY_VI = {"once": "1 lần", "daily": "hàng ngày", "weekly": "hàng tuần",
 WEEKDAYS = ["Thứ 2", "Thứ 3", "Thứ 4", "Thứ 5", "Thứ 6", "Thứ 7", "Chủ nhật"]
 DATE_FIELDS = ("date", "due")
 REQUIRED = ("name", "amount", "category")
-INDENT = 23  # column where form values and chips start
+
+
+def use_ascii(flag: bool) -> None:
+    """Switch every glyph (icons, bars, kaomoji, pills) to plain ASCII."""
+    global G, ICONS
+    G, ICONS = (ASCII_GLYPHS, False) if flag else (UNICODE_GLYPHS, True)
+
+
+def _ascii_default() -> bool:
+    if anim is not None:
+        return anim.ascii_mode()
+    enc = (getattr(sys.stdout, "encoding", "") or "").lower().replace("-", "")
+    return os.environ.get("ECO_ASCII") == "1" or os.environ.get("TERM") in ("linux", "dumb") or enc != "utf8"
 
 
 class Field(NamedTuple):
@@ -57,6 +110,7 @@ class Field(NamedTuple):
     choices: Optional[List[Tuple[str, str]]] = None
     placeholder: str = ""
     show_if: Optional[Tuple[str, str]] = None  # (other field, value) that makes this field visible
+    short: str = ""  # label for narrow terminals
 
 
 _AMOUNT = Field("amount", "Số tiền", placeholder="vd: 50k, 1.5tr, 50k+20k, 3x150k")
@@ -70,8 +124,8 @@ FORMS = {
                                 _AMOUNT, _CATEGORY,
                                 Field("every", "Lặp", EVERY),
                                 Field("day", "Ngày trả hằng tháng", placeholder="chọn bên dưới (không bắt buộc)",
-                                      show_if=("every", "monthly")),
-                                Field("due", "Ngày bắt đầu"),
+                                      show_if=("every", "monthly"), short="Ngày trả"),
+                                Field("due", "Ngày bắt đầu", short="Bắt đầu"),
                                 Field("kind", "Loại", KINDS)]),
 }
 
@@ -116,12 +170,27 @@ class Line:
         self.spans.append((x0, self.x, action))
         return self
 
-    def button(self, label: str, key: str, hint: str, primary: bool = False) -> "Line":
+    def pill(self, parts: List[Tuple[str, str]], action: Action, bg: str, caps: bool = True) -> "Line":
+        """Rounded-looking button: half-block caps in the pill colour around the styled parts."""
         x0 = self.x
-        self.add(" %s " % label, BTN_PRIMARY if primary else BTN)
-        self.add(" %s " % hint, BTN_PRIMARY_KEY if primary else BTN_KEY)
-        self.spans.append((x0, self.x, ("key", key)))
-        return self.add(" ")
+        if caps and G["cap_l"]:
+            self.add(G["cap_l"], bg)
+        for s, style in parts:
+            self.add(s, style)
+        if caps and G["cap_r"]:
+            self.add(G["cap_r"], bg)
+        self.spans.append((x0, self.x, action))
+        return self
+
+    def button(self, label: str, key: str, hint: str, primary: bool = False, mode: str = "full",
+               caps: bool = True, short: str = "") -> "Line":
+        """mode: full = label + key, short = short label + key, key = key only."""
+        lab, kst = (BTN_PRIMARY, BTN_PRIMARY_KEY) if primary else (BTN, BTN_KEY)
+        if mode == "key":
+            parts = [(" %s " % hint, kst)]
+        else:
+            parts = [(" %s " % (short or label if mode == "short" else label), lab), ("%s " % hint, kst)]
+        return self.pill(parts, ("key", key), ACCENT if primary else PILL, caps).add(" ")
 
 
 class Frame(NamedTuple):
@@ -135,8 +204,43 @@ class Frame(NamedTuple):
 
 
 def hit_at(hits: List[Hit], row: int, col: int) -> Optional[Action]:
-    """First hit containing (row, col); button spans come before whole-row actions."""
+    """First hit containing (row, col); overlays come first, then buttons, then whole-row actions."""
     return next((a for r, x0, x1, a in hits if r == row and x0 <= col < x1), None)
+
+
+def fit(variants: List[Callable[[], Line]], width: int) -> Line:
+    """First variant whose line fits in width (the last one otherwise)."""
+    ln = Line()
+    for make in variants:
+        ln = make()
+        if ln.x <= width:
+            break
+    return ln
+
+
+def hjoin(left: List[Line], right: List[Line], lw: int, gap: int, rw: int) -> List[Line]:
+    """Two columns side by side; hit spans of the right column are shifted, row actions become spans."""
+    out = []
+    for i in range(max(len(left), len(right))):
+        lft = left[i] if i < len(left) else Line()
+        rgt = right[i] if i < len(right) else Line()
+        ln = Line()
+        lt = lft.text.copy()
+        lt.truncate(lw, overflow="crop", pad=True)
+        ln.text.append_text(lt)
+        ln.add(" " * gap)
+        rt = rgt.text.copy()
+        rt.truncate(rw, overflow="crop")
+        ln.text.append_text(rt)
+        off = lw + gap
+        ln.spans = ([(x0, min(x1, lw), a) for x0, x1, a in lft.spans if x0 < lw]
+                    + [(x0 + off, min(x1, rw) + off, a) for x0, x1, a in rgt.spans if x0 < rw])
+        if lft.action:
+            ln.spans.append((0, lw, lft.action))
+        if rgt.action:
+            ln.spans.append((off, off + rw, rgt.action))
+        out.append(ln)
+    return out
 
 
 # --- state ---
@@ -222,12 +326,20 @@ class State:
         self.selected = None  # type: Optional[int]
         self.scroll = 0
         self.data = {}  # type: Dict[int, Dict[str, Any]]
+        self.dash = {}  # type: Dict[str, Any]  # last overview data, for the header mood
         self.balance = None  # type: Optional[int]
         self.form = None  # type: Optional[Form]
         self.confirm = None  # type: Optional[Dict[str, Any]]
         self.status = ("", True)  # (message, ok)
         self.hits = []  # type: List[Hit]
         self.running = True
+        self.sound = True
+        # animations: start times on the same clock as `now`
+        self.now = 0.0
+        self.toast = None  # type: Optional[Tuple[Any, float]]
+        self.sparkle = None  # type: Optional[Tuple[Any, float]]
+        self.count = None  # type: Optional[Tuple[int, int, float]]
+        self.bars_t0 = None  # type: Optional[float]
 
     def items(self) -> List[Dict[str, Any]]:
         if self.tab not in (1, 2):
@@ -237,6 +349,25 @@ class State:
 
     def set_status(self, msg: str, ok: bool = True) -> None:
         self.status = (msg, ok)
+
+    def animating(self) -> bool:
+        """True while any animation still has frames to draw at `now`."""
+        t = self.now
+        return bool((self.toast and not self.toast[0].done(t - self.toast[1]))
+                    or (self.sparkle and not self.sparkle[0].done(t - self.sparkle[1]))
+                    or (self.count and t - self.count[2] < 0.6)
+                    or (self.bars_t0 is not None and t - self.bars_t0 < 0.5))
+
+    def shown_balance(self) -> Optional[int]:
+        if anim is not None and self.count and self.now - self.count[2] < 0.6:
+            a, b, t0 = self.count
+            return anim.count_up(a, b, self.now - t0)
+        return self.balance
+
+    def bar_pct(self, pct: float) -> float:
+        if anim is not None and self.bars_t0 is not None and self.now - self.bars_t0 < 0.5:
+            return anim.bar_fill(pct, self.now - self.bars_t0)
+        return pct
 
 
 def load(state: State, api: ApiCall) -> None:
@@ -251,12 +382,53 @@ def load(state: State, api: ApiCall) -> None:
         data = {}
     if state.tab == 1:
         data = dict(data, transactions=list(reversed(data.get("transactions") or [])))  # newest first
+    if state.tab == 0 and data:
+        state.dash = data
     state.data[state.tab] = data
     if "balance" in data:
         state.balance = data["balance"]
     n = len(state.items())
     if state.selected is not None and state.selected >= n:
         state.selected = n - 1 if n else None
+
+
+# --- feedback: sound, toast, sparkle, counters ---
+def play(state: State, event: str) -> None:
+    if sfx is not None:
+        try:
+            sfx.play(event, enabled=state.sound)
+        except Exception:  # never let audio break the UI
+            pass
+
+
+def toast(state: State, message: str, kind: str = "success", sparkle: bool = False) -> None:
+    if anim is None:
+        return
+    state.toast = (anim.Toast(message, kind), state.now)
+    state.sparkle = (anim.Sparkle(44, 9, seed=int(state.now * 1000) & 0xFFFF), state.now) if sparkle else None
+
+
+def fail(state: State, message: str) -> None:
+    state.set_status(message, False)
+    toast(state, message, "error")
+    play(state, "error")
+
+
+def worrying(dash: Dict[str, Any]) -> bool:
+    low = dash.get("lowest") or {}
+    return low.get("balance", 0) < 0 or any(float(b.get("pct", 0)) >= 100 for b in dash.get("budgets") or [])
+
+
+def celebrate(state: State, api: ApiCall, message: str, event: str, kind: str = "success",
+              sparkle: bool = True) -> None:
+    """After a successful change: reload, tick the balance, pop a toast and play a sound."""
+    before = state.balance
+    refresh(state, api)
+    if before is not None and state.balance is not None and before != state.balance:
+        state.count = (before, state.balance, state.now)
+    state.set_status(message)
+    toast(state, message, kind, sparkle)
+    play(state, "warn" if event == "save" and worrying(state.dash) else event)
 
 
 # --- formatting helpers ---
@@ -267,6 +439,36 @@ def _vi_date(iso: str, short: bool = False) -> str:
 
 def _dmy(d: date) -> str:
     return d.strftime("%d/%m/%Y")
+
+
+def short_money(v: int) -> str:
+    """Compact amount for narrow columns: 85k, 3tr, 1,5tr, 2 tỷ."""
+    a, sign = abs(v), "-" if v < 0 else ""
+    for unit, size in (("tỷ", 10 ** 9), ("tr", 10 ** 6), ("k", 10 ** 3)):
+        if a >= size:
+            n = ("%.1f" % (a / size)).rstrip("0").rstrip(".").replace(".", ",")
+            return sign + n + ("" if unit != "tỷ" else " ") + unit
+    return "%s%dđ" % (sign, a)
+
+
+def _plain(s: str) -> str:
+    s = unicodedata.normalize("NFD", s.lower().replace("đ", "d"))
+    return "".join(c for c in s if not unicodedata.combining(c))
+
+
+def category_icon(name: str) -> str:
+    words = " %s " % " ".join(_plain(name).split())
+    for keys, icon in CATEGORY_ICONS:
+        if any(" %s " % k in words for k in keys):
+            return icon
+    return "•"
+
+
+def cat_label(name: str) -> str:
+    if not ICONS:
+        return name
+    icon = category_icon(name)
+    return "%s%s %s" % (icon, " " if cell_len(icon) == 1 else "", name)  # icons padded to 2 cells
 
 
 def date_chips(today: date) -> List[Tuple[str, str]]:
@@ -290,60 +492,168 @@ def _signed(amount: int, kind: str = "") -> Tuple[str, str]:
     return money(v, signed=True), EXPENSE_C if v < 0 else INCOME_C
 
 
-def _bar(pct: float, width: int) -> Text:
+def _bar(pct: float, width: int, shown: Optional[float] = None) -> Text:
+    """Progress bar coloured by the real pct; `shown` is the (animated) fill level."""
     color = INCOME_C if pct < 80 else WARN_C if pct < 100 else EXPENSE_C
-    filled = int(round(max(0.0, min(100.0, pct)) / 100 * width))
-    return Text.assemble(("█" * filled, color), ("░" * (width - filled), RULE_C))
+    fill = pct if shown is None else shown
+    filled = int(round(max(0.0, min(100.0, fill)) / 100 * width))
+    return Text.assemble((G["full"] * filled, color), (G["empty"] * (width - filled), RULE_C))
 
 
 def _rule(width: int) -> Line:
-    return Line().add(" " + "─" * max(0, width - 2), RULE_C)
+    return Line().add(" " + G["rule"] * max(0, width - 2), RULE_C)
 
 
 def _title(s: str) -> Line:
     return Line().add(" " + s, "bold " + ACCENT)
 
 
+def mood(dash: Dict[str, Any]) -> str:
+    low = dash.get("lowest") or {}
+    if low.get("balance", 0) < 0:
+        return G["sad"]
+    if any(float(b.get("pct", 0)) >= 80 for b in dash.get("budgets") or []):
+        return G["worried"]
+    return G["happy"]
+
+
 # --- screen parts (pure) ---
-def header_line(balance: Optional[int], width: int) -> Line:
-    left = " ◆ Manage Eco"
-    bal = "—" if balance is None else money(balance)
-    color = MUTED if balance is None else EXPENSE_C if balance < 0 else INCOME_C
-    right_len = cell_len("Số dư " + bal + " ")
-    return (Line().add(left, "bold " + ACCENT).add(" " * max(1, width - cell_len(left) - right_len))
-            .add("Số dư ", MUTED).add(bal, "bold " + color).add(" "))
+def header_line(state: State, width: int) -> Line:
+    bal = state.shown_balance()
+    amount = "—" if bal is None else money(bal)
+    color = MUTED if bal is None else EXPENSE_C if bal < 0 else INCOME_C
+    face = mood(state.dash)
+    for left, label in ((" %s Manage Eco " % G["logo"], "Số dư "), (" %s Eco " % G["logo"], "Số dư "),
+                        (" %s Eco " % G["logo"], "")):
+        right_len = cell_len(label + amount + " ")
+        if cell_len(left + face) + 1 + right_len <= width:
+            break
+    pad = max(1, width - cell_len(left + face) - right_len)
+    return (Line().add(left, "bold " + ACCENT).add(face, PINK).add(" " * pad)
+            .add(label, MUTED).add(amount, "bold " + color).add(" "))
 
 
-def tabs_line(active: int) -> Line:
-    ln = Line().add(" ")
-    for i, name in enumerate(TABS):
-        ln.click(" %d %s " % (i + 1, name), ("tab", i), TAB_ON if i == active else TAB_OFF).add(" ")
-    return ln
+def tabs_line(active: int, width: int) -> Line:
+    def make(labels: List[str], icons: bool, caps: bool, gap: str = " ") -> Callable[[], Line]:
+        def build() -> Line:
+            ln = Line().add(" ")
+            for i, name in enumerate(labels):
+                icon = TAB_ICONS[i] + " " if icons and ICONS else ""
+                text = (" %s%s " % (icon, name)) if name or not icon else " %s" % icon
+                ln.pill([(text, TAB_ON if i == active else TAB_OFF)], ("tab", i),
+                        ACCENT if i == active else "#2a2448", caps).add(gap)
+            return ln
+        return build
+    icon_only = [TABS_SHORT[i] if i == active else "" for i in range(4)]
+    digits = [str(i + 1) for i in range(4)]
+    return fit([make(TABS, True, True), make(TABS, True, False), make(TABS_SHORT, True, True),
+                make(TABS_SHORT, True, False), make(icon_only, True, False),
+                make(digits, False, False, "")], width)
 
 
-def action_line(state: State) -> Line:
-    ln = Line().add(" ")
+def action_line(state: State, width: int) -> Line:
     if state.form:
-        return ln.button("Lưu", "enter", "Enter", primary=True).button("Huỷ", "esc", "Esc")
-    if state.confirm:
-        ln.add("Xoá %s? " % state.confirm["label"], "bold " + EXPENSE_C)
-        return ln.button("Có", "y", "y", primary=True).button("Không", "n", "n")
-    ln.button("+ Chi", "a", "a").button("+ Thu", "i", "i").button("+ Dòng tiền", "p", "p")
-    if state.selected is not None and state.tab == 2:
-        ln.button("✓ Xong", "d", "d")
-    if state.selected is not None and state.tab == 1:
-        ln.button("✕ Xoá", "x", "x")
-    return ln.button("Thoát", "q", "q")
+        buttons = [("Lưu", "Lưu", "enter", "Enter", True), ("Huỷ", "Huỷ", "esc", "Esc", False)]
+        prefix = ""
+    elif state.confirm:
+        buttons = [("Có", "Có", "y", "y", True), ("Không", "Không", "n", "n", False)]
+        prefix = "Xoá %s? " % state.confirm["label"]
+    else:
+        buttons = [("+ Chi", "+Chi", "a", "a", False), ("+ Thu", "+Thu", "i", "i", False),
+                   ("+ Dòng tiền", "+Dòng", "p", "p", False)]
+        if state.selected is not None and state.tab == 2:
+            buttons.append(("%s Xong" % G["done"], G["done"], "d", "d", False))
+        if state.selected is not None and state.tab == 1:
+            buttons.append(("%s Xoá" % G["del"], G["del"], "x", "x", False))
+        snd = G["sound_on"] if state.sound else G["sound_off"]
+        buttons += [(snd, snd, "m", "m", False), ("Thoát", "Thoát", "q", "q", False)]
+        prefix = ""
+
+    def make(mode: str, caps: bool, with_prefix: bool = True) -> Callable[[], Line]:
+        def build() -> Line:
+            ln = Line().add(" ")
+            if prefix and with_prefix:
+                ln.add(prefix, "bold " + EXPENSE_C)
+            for label, short, key, hint, primary in buttons:
+                ln.button(label, key, hint, primary, mode, caps, short)
+            return ln
+        return build
+    return fit([make("full", True), make("full", False), make("short", True), make("short", False),
+                make("key", False), make("key", False, False)], width)
 
 
 def status_line(state: State) -> Line:
     msg, ok = state.status
     if not msg:
         return Line().add(" Nhấp chuột vào nút, hoặc bấm phím ghi trên nút.", MUTED)
-    return Line().add((" ✓ " if ok else " ✗ ") + msg, "bold " + (INCOME_C if ok else EXPENSE_C))
+    return Line().add(" %s %s" % (G["ok"] if ok else G["err"], msg), "bold " + (INCOME_C if ok else EXPENSE_C))
 
 
-def overview_lines(d: Dict[str, Any], width: int) -> List[Line]:
+def budget_section(state: State, budgets: List[Dict[str, Any]], width: int, rows: int) -> List[Line]:
+    out = [_title("Ngân sách")]
+    if not budgets:
+        return out + [Line().add("   Chưa đặt ngân sách (eco budget set DANH_MỤC SỐ_TIỀN)", MUTED)]
+    full = width >= 70
+    cat_w = 14 if width >= 56 else 11
+    money_w = 25 if full else 11
+    bar_w = max(4, min(30, width - 3 - cat_w - 1 - 6 - 2 - money_w))
+    for b in sorted(budgets, key=lambda b: -float(b.get("pct", 0)))[:rows]:
+        pct = float(b.get("pct", 0))
+        spent, limit = b.get("spent", 0), b.get("limit", 0)
+        ln = Line(("tab", 3)).add("   ").cell(cat_label(b["category"]), cat_w).add(" ")
+        ln.text.append_text(_bar(pct, bar_w, state.bar_pct(pct)))
+        ln.cell("%d%%" % round(pct), 6, right=True).add("  ")
+        amounts = ("%s / %s" % (money(spent), money(limit))) if full else \
+            "%s/%s" % (short_money(spent), short_money(limit))
+        ln.cell(amounts, money_w, right=True)
+        out.append(ln)
+    return out
+
+
+def upcoming_section(rows_data: List[Dict[str, Any]], width: int, rows: int) -> List[Line]:
+    out = [_title("Sắp tới 30 ngày")]
+    if not rows_data:
+        return out + [Line().add("   Không có dòng tiền nào trong 30 ngày tới.", MUTED)]
+    with_balance = width >= 70
+    name_w = max(6, width - 3 - 5 - 2 - 2 - 15 - (19 if with_balance else 0))
+    for r in rows_data[:rows]:
+        amt, c = _signed(r["amount"])
+        ln = (Line(("tab", 2)).add("   ").cell(_vi_date(r["date"], short=True), 5, MUTED).add("  ")
+              .cell(r["name"], name_w).add("  ").cell(amt, 15, c, right=True))
+        if with_balance:
+            ln.add(" %s " % G["arrow"], MUTED).cell(money(r["balance"]), 15,
+                                                    EXPENSE_C if r["balance"] < 0 else "", right=True)
+        out.append(ln)
+    return out
+
+
+def balance_series(d: Dict[str, Any], today: date, days: int = 30) -> List[int]:
+    """End-of-day balance for today..today+days from the dash forecast rows."""
+    bal = d.get("balance") or 0
+    by_day = {}  # type: Dict[str, int]
+    for r in d.get("upcoming") or []:
+        by_day[r["date"]] = r["balance"]  # rows are chronological: the last one of a day wins
+    out = []
+    for i in range(days + 1):
+        bal = by_day.get((today + timedelta(days=i)).isoformat(), bal)
+        out.append(bal)
+    return out
+
+
+def sparkline_lines(d: Dict[str, Any], today: date, width: int) -> List[Line]:
+    series = balance_series(d, today)
+    lo, hi = min(series), max(series)
+    ticks = G["spark"]
+    k = max(1, min(3, (width - 34) // len(series)))
+    ln = Line(("tab", 2)).add("   ")
+    for v in series:
+        level = 0 if hi == lo else int((v - lo) / (hi - lo) * (len(ticks) - 1))
+        ln.add(ticks[level] * k, EXPENSE_C if v < 0 else INCOME_C)
+    ln.add("   thấp %s · cao %s" % (short_money(lo), short_money(hi)), MUTED)
+    return [_title("Số dư 30 ngày tới"), ln]
+
+
+def overview_lines(state: State, d: Dict[str, Any], width: int, height: int) -> List[Line]:
     m = d.get("month") or {}
     inc, exp, net = m.get("income", 0), m.get("expense", 0), m.get("net", 0)
     net_c = EXPENSE_C if net < 0 else INCOME_C
@@ -361,40 +671,32 @@ def overview_lines(d: Dict[str, Any], width: int) -> List[Line]:
             out.append(Line().add("   ").cell(name, 10, MUTED).add(money(v), "bold " + c))
     out.append(_rule(width))
 
-    out.append(_title("Ngân sách"))
-    budgets = sorted(d.get("budgets") or [], key=lambda b: -float(b.get("pct", 0)))[:5]
-    if not budgets:
-        out.append(Line().add("   Chưa đặt ngân sách (eco budget set DANH_MỤC SỐ_TIỀN)", MUTED))
-    bar_w = max(6, min(24, width - 60))
-    for b in budgets:
-        pct = float(b.get("pct", 0))
-        ln = Line(("tab", 3)).add("   ").cell(b["category"], 14).add(" ")
-        ln.text.append_text(_bar(pct, bar_w))
-        ln.cell("%d%%" % round(pct), 6, right=True).add("  ")
-        ln.cell("%s / %s" % (money(b.get("spent", 0)), money(b.get("limit", 0))), 27, right=True)
-        out.append(ln)
-    out.append(_rule(width))
-
-    out.append(_title("Sắp tới 30 ngày"))
-    upcoming = (d.get("upcoming") or [])[:5]
-    if not upcoming:
-        out.append(Line().add("   Không có dòng tiền nào trong 30 ngày tới.", MUTED))
-    name_w = max(8, width - 52)
-    for r in upcoming:
-        amt, c = _signed(r["amount"])
-        out.append(Line(("tab", 2)).add("   ").cell(_vi_date(r["date"], short=True), 5, MUTED).add("  ")
-                   .cell(r["name"], name_w).add("  ").cell(amt, 15, c, right=True).add("  → ", MUTED)
-                   .cell(money(r["balance"]), 15, EXPENSE_C if r["balance"] < 0 else "", right=True))
+    tail = []  # type: List[Line]
     low = d.get("lowest")
     if low and low.get("balance", 0) < 0:
-        out.append(Line(("tab", 2)).add(" ⚠ Sẽ âm tiền ngày %s (thấp nhất %s)" % (
-            _vi_date(low["date"]), money(low["balance"])), "bold " + EXPENSE_C))
+        tail.append(Line(("tab", 2)).add(" %s Sẽ âm tiền ngày %s (thấp nhất %s)" % (
+            G["warn"], _vi_date(low["date"]), money(low["balance"])), "bold " + EXPENSE_C))
     else:
-        out.append(Line().add(" ✓ Số dư không bị âm trong 90 ngày tới.", INCOME_C))
+        tail.append(Line().add(" %s Số dư không bị âm trong 90 ngày tới." % G["ok"], INCOME_C))
     overdue = d.get("overdue") or []
     if overdue:
-        out.append(Line(("tab", 2)).add(" ⏰ Quá hạn: " + ", ".join(p["name"] for p in overdue), WARN_C))
-    return out
+        tail.append(Line(("tab", 2)).add(" %s Quá hạn: %s" % (G["late"], ", ".join(p["name"] for p in overdue)),
+                                         WARN_C))
+    spark = sparkline_lines(d, state.today, width) if width >= 160 else []
+    spare = height - len(out) - len(tail) - (len(spark) + 1 if spark else 0)
+
+    budgets, upcoming = d.get("budgets") or [], d.get("upcoming") or []
+    if width >= 120:
+        rows = max(1, min(12, spare - 2))
+        lw = (width - 3) // 2
+        out += hjoin(budget_section(state, budgets, lw, rows), upcoming_section(upcoming, width - lw - 3, rows),
+                     lw, 3, width - lw - 3)
+    else:
+        rows = max(1, min(10, (spare - 3) // 2))
+        out += budget_section(state, budgets, width, rows) + [_rule(width)] + upcoming_section(upcoming, width, rows)
+    if spark:
+        out += [_rule(width)] + spark
+    return out + tail
 
 
 def list_lines(state: State, items: List[Dict[str, Any]], head: Line, row: Callable[[Dict[str, Any]], Line],
@@ -417,50 +719,81 @@ def list_lines(state: State, items: List[Dict[str, Any]], head: Line, row: Calla
 
 
 def transactions_lines(state: State, width: int, height: int) -> List[Line]:
-    note_w = max(4, width - 48)
-    head = (Line().add(" ").cell("Ngày", 10, MUTED).add("  ").cell("Danh mục", 14, MUTED).add("  ")
-            .cell("Ghi chú", note_w, MUTED).add("  ").cell("Số tiền", 16, MUTED, right=True))
+    compact, wide = width < 60, width >= 120
+    date_w, cat_w, amt_w = (5, 14, 14) if compact else (10, 18, 16)
+    extra = 13 if wide else 0  # "#id  Thu/Chi"
+    note_w = 0 if compact else max(4, width - 1 - date_w - cat_w - amt_w - 6 - extra)
+    if compact:
+        cat_w = max(6, width - 1 - date_w - amt_w - 4)
+
+    def columns(ln: Line, d: str, c: str, note: str, kind: str, ident: str, amount: str,
+                styles: Tuple[str, str, str]) -> Line:
+        ln.add(" ").cell(d, date_w, styles[0]).add("  ").cell(c, cat_w).add("  ")
+        if note_w:
+            ln.cell(note, note_w, MUTED).add("  ")
+        if wide:
+            ln.cell(ident, 6, MUTED).cell(kind, 5, styles[2]).add("  ")
+        return ln.cell(amount, amt_w, styles[1], right=True)
+
+    head = columns(Line(), "Ngày", "Danh mục", "Ghi chú", "Loại", "#", "Số tiền", (MUTED, MUTED, MUTED))
+    head.text.stylize(MUTED)
 
     def row(t: Dict[str, Any]) -> Line:
         amt, c = _signed(t["amount"], t["kind"])
-        return (Line().add(" ").cell(_vi_date(t["date"]), 10).add("  ").cell(t["category"], 14).add("  ")
-                .cell(t.get("note", ""), note_w, MUTED).add("  ").cell(amt, 16, c, right=True))
+        return columns(Line(), _vi_date(t["date"], short=compact), cat_label(t["category"]), t.get("note", ""),
+                       "Thu" if t["kind"] == "income" else "Chi", "#%s" % t["id"], amt, ("", c, c))
     return list_lines(state, state.items(), head, row, height,
                       "Chưa có giao dịch. Nhấn [+ Chi] hoặc [+ Thu] để thêm.")
 
 
 def plans_lines(state: State, width: int, height: int) -> List[Line]:
-    name_w = max(4, width - 58)
-    head = (Line().add(" ").cell("Ngày tới", 10, MUTED).add("  ").cell("Tên", name_w, MUTED).add("  ")
-            .cell("Lặp", 23, MUTED).add("  ").cell("Số tiền", 16, MUTED, right=True))
+    compact, wide = width < 60, width >= 120
+    date_w, amt_w = (5, 14) if compact else (10, 16)
+    rec_w = 0 if compact else 23
+    cat_w = 18 if wide else 0
+    name_w = max(4, width - 1 - date_w - amt_w - 4 - (rec_w + 2 if rec_w else 0) - (cat_w + 2 if cat_w else 0))
     today = state.today.isoformat()
+
+    def columns(ln: Line, d: str, name: str, rec: str, cat: str, amount: str, styles: Tuple[str, str]) -> Line:
+        ln.add(" ").cell(d, date_w, styles[0]).add("  ").cell(name, name_w).add("  ")
+        if rec_w:
+            ln.cell(rec, rec_w, MUTED).add("  ")
+        if cat_w:
+            ln.cell(cat, cat_w).add("  ")
+        return ln.cell(amount, amt_w, styles[1], right=True)
+
+    head = columns(Line(), "Ngày tới", "Tên", "Lặp", "Danh mục", "Số tiền", (MUTED, MUTED))
+    head.text.stylize(MUTED)
 
     def row(p: Dict[str, Any]) -> Line:
         amt, c = _signed(p["amount"], p["kind"])
-        return (Line().add(" ").cell(_vi_date(p["due_date"]), 10, WARN_C if p["due_date"] < today else "").add("  ")
-                .cell(p["name"], name_w).add("  ").cell(recurrence_label(p), 23, MUTED)
-                .add("  ").cell(amt, 16, c, right=True))
+        return columns(Line(), _vi_date(p["due_date"], short=compact), p["name"], recurrence_label(p),
+                       cat_label(p.get("category", "")), amt, (WARN_C if p["due_date"] < today else "", c))
     return list_lines(state, state.items(), head, row, height,
                       "Chưa có dòng tiền. Nhấn [+ Dòng tiền] để thêm (vd: lương, thuê nhà, mua laptop).")
 
 
-def budgets_lines(d: Dict[str, Any], width: int) -> List[Line]:
+def budgets_lines(state: State, d: Dict[str, Any], width: int) -> List[Line]:
     budgets = d.get("budgets") or []
     if not budgets:
         return [Line(), Line().add("   Chưa đặt ngân sách. Dùng lệnh: eco budget set DANH_MỤC SỐ_TIỀN", MUTED)]
-    wide = width >= 100
-    bar_w = max(6, min(30, width - (72 if wide else 56)))
-    head = (Line().add(" ").cell("Danh mục", 14, MUTED).add("  ").cell("Đã dùng", bar_w + 6, MUTED).add("  ")
-            .cell("Đã chi / Hạn mức", 27, MUTED, right=True))
+    full, wide = width >= 80, width >= 100
+    cat_w = 18 if width >= 60 else 12
+    money_w = 27 if full else 11
+    bar_w = max(4, min(40, width - 1 - cat_w - 2 - 6 - 2 - money_w - (16 if wide else 0)))
+    head = (Line().add(" ").cell("Danh mục", cat_w, MUTED).add("  ").cell("Đã dùng", bar_w + 6, MUTED).add("  ")
+            .cell("Đã chi / Hạn mức", money_w, MUTED, right=True))
     if wide:
         head.add("  ").cell("Còn lại", 14, MUTED, right=True)
     out = [Line(), head]
     for b in budgets:
         pct, rem = float(b.get("pct", 0)), b.get("remaining", 0)
-        ln = Line().add(" ").cell(b["category"], 14).add("  ")
-        ln.text.append_text(_bar(pct, bar_w))
+        spent, limit = b.get("spent", 0), b.get("limit", 0)
+        ln = Line().add(" ").cell(cat_label(b["category"]), cat_w).add("  ")
+        ln.text.append_text(_bar(pct, bar_w, state.bar_pct(pct)))
         ln.cell("%d%%" % round(pct), 6, right=True).add("  ")
-        ln.cell("%s / %s" % (money(b.get("spent", 0)), money(b.get("limit", 0))), 27, right=True)
+        ln.cell(("%s / %s" % (money(spent), money(limit))) if full else
+                "%s/%s" % (short_money(spent), short_money(limit)), money_w, right=True)
         if wide:
             ln.add("  ").cell(money(rem), 14, EXPENSE_C if rem < 0 else "", right=True)
         out.append(ln)
@@ -468,7 +801,7 @@ def budgets_lines(d: Dict[str, Any], width: int) -> List[Line]:
     return out
 
 
-def chip_lines(chips: List[Tuple[str, str]], key: str, width: int, on: Callable[[str], bool],
+def chip_lines(chips: List[Tuple[str, str]], key: str, width: int, on: Callable[[str], bool], indent: int,
                max_lines: int = 2) -> List[Line]:
     """Clickable (value, label) chips under a form field, wrapped onto at most `max_lines` rows."""
     lines = []  # type: List[Line]
@@ -478,19 +811,19 @@ def chip_lines(chips: List[Tuple[str, str]], key: str, width: int, on: Callable[
         if ln is None or ln.x + w > width:
             if len(lines) == max_lines:
                 break
-            ln = Line().add(" " * INDENT)
+            ln = Line().add(" " * indent)
             lines.append(ln)
         ln.click(" %s " % label, ("chip", key, value), CHIP_ON if on(value) else CHIP).add(" ")
     return lines
 
 
-def calendar_lines(form: Form, key: str) -> List[Line]:
+def calendar_lines(form: Form, key: str, indent: int) -> List[Line]:
     """Mini month calendar for a date field: ‹ › change month, click a day to pick it."""
     dv = form.date_value(key)
     y, m = form.months.get(key) or ((dv or form.today).year, (dv or form.today).month)
-    pad = " " * INDENT
-    out = [Line().add(pad).click(" ‹ ", ("cal", key, -1), BTN).add("  Tháng %02d/%d  " % (m, y), "bold")
-           .click(" › ", ("cal", key, 1), BTN),
+    pad = " " * indent
+    out = [Line().add(pad).click(" %s " % G["prev"], ("cal", key, -1), BTN).add("  Tháng %02d/%d  " % (m, y), "bold")
+           .click(" %s " % G["next"], ("cal", key, 1), BTN),
            Line().add(pad + "".join("%3s" % d for d in ("T2", "T3", "T4", "T5", "T6", "T7", "CN")), MUTED)]
     for week in calendar.monthcalendar(y, m):
         ln = Line().add(pad)
@@ -523,41 +856,50 @@ def _preview(form: Form, f: Field) -> Optional[Tuple[str, str]]:
                 return p, ACCENT
         dv = form.date_value(f.key)
         if dv:
-            return "→ %s, %s" % (WEEKDAYS[dv.weekday()], _dmy(dv)), ACCENT
-        return ("⚠ chưa hiểu ngày này", WARN_C) if value else None
+            return "%s %s, %s" % (G["arrow"], WEEKDAYS[dv.weekday()], _dmy(dv)), ACCENT
+        return ("%s chưa hiểu ngày này" % G["warn"], WARN_C) if value else None
     return None
 
 
 def form_lines(form: Form, width: int) -> Tuple[List[Line], Tuple[int, int]]:
     """Form rows plus the (first, last) row of the focused field's block, for scrolling."""
+    compact = width < 60
+    indent = 14 if compact else 23
     out = [Line(), _title(form.title)]
     if form.error:
-        out.append(Line().add("   ✗ " + form.error, EXPENSE_C))
+        out.append(Line().add("   %s %s" % (G["err"], form.error), EXPENSE_C))
     out.append(Line())
     focus_rows = (0, 0)
     for f in form.visible():
         start, focused = len(out), f.key == form.focus
-        ln = Line(("focus", f.key)).add(" ▸ " if focused else "   ", ACCENT)
-        ln.cell(f.label, INDENT - 3, "bold " + ACCENT if focused else "")
+        ln = Line(("focus", f.key)).add(" %s " % G["marker"] if focused else "   ", ACCENT)
+        ln.cell(f.short if compact and f.short else f.label, indent - 3, "bold " + ACCENT if focused else "")
         value = form.values[f.key]
+        below = []  # type: List[Line]
         if f.choices:
             for val, label in f.choices:
                 ln.click(" %s " % label, ("chip", f.key, val), CHIP_ON if val == value else CHIP).add(" ")
+            if ln.x > width:  # no room inline: show the choice, chips wrap underneath
+                ln = Line(("focus", f.key)).add(" %s " % G["marker"] if focused else "   ", ACCENT)
+                ln.cell(f.short or f.label, indent - 3, "bold " + ACCENT if focused else "")
+                ln.add(dict(f.choices).get(value, ""), "bold")
+                below = chip_lines(f.choices, f.key, width, lambda v, cur=value: v == cur, indent, max_lines=3)
         else:
             ln.add(value, "bold" if focused else "")
             if focused:
-                ln.add("▏", ACCENT)
+                ln.add(G["cursor"], ACCENT)
             if not value:
                 ln.add(form.placeholder(f), MUTED)
             preview = _preview(form, f)
             if preview:
                 ln.add("  " + preview[0], preview[1])
+            below = chip_lines(form.chips(f), f.key, width, lambda v, k=f.key: form.chip_on(k, v), indent)
         out.append(ln)
-        out.extend(chip_lines(form.chips(f), f.key, width, lambda v, k=f.key: form.chip_on(k, v)))
+        out.extend(below)
         if focused and f.key in DATE_FIELDS:
-            out.extend(calendar_lines(form, f.key))
+            out.extend(calendar_lines(form, f.key, indent))
         if f.key in form.errors:
-            out.append(Line().add(" " * INDENT + "⚠ " + form.errors[f.key], EXPENSE_C))
+            out.append(Line().add(" " * indent + "%s %s" % (G["warn"], form.errors[f.key]), EXPENSE_C))
         if focused:
             focus_rows = (start, len(out) - 1)
     out += [Line(), Line().add("   Tab/↑↓ chuyển ô · nhấp để chọn · Số tiền nhận phép tính + - x :", MUTED)]
@@ -573,12 +915,60 @@ def body_lines(state: State, width: int, height: int) -> List[Line]:
         return lines
     d = state.data.get(state.tab, {})
     if state.tab == 0:
-        return overview_lines(d, width) if d else [Line(), Line().add("   Không có dữ liệu.", MUTED)]
+        return overview_lines(state, d, width, height) if d else [Line(), Line().add("   Không có dữ liệu.", MUTED)]
     if state.tab == 1:
         return transactions_lines(state, width, height)
     if state.tab == 2:
         return plans_lines(state, width, height)
-    return budgets_lines(d, width)
+    return budgets_lines(state, d, width)
+
+
+# --- overlays (toast + sparkle) ---
+def _tail(text: Text, start: int) -> Text:
+    """The part of a line from cell `start` on; a wide char cut in half becomes a space."""
+    pos = 0
+    for i, ch in enumerate(text.plain):
+        if pos >= start:
+            return Text(" " * (pos - start)) + text[i:]
+        pos += cell_len(ch)
+    return Text(" " * max(0, pos - start))
+
+
+def put(line: Text, x: int, piece: Text) -> Text:
+    """Line with `piece` drawn over it starting at cell x (same cell width as before)."""
+    width = line.cell_len
+    left = line.copy()
+    left.truncate(x, overflow="crop", pad=True)
+    out = left + piece + _tail(line, x + piece.cell_len)
+    out.truncate(width, overflow="crop", pad=True)
+    out.no_wrap, out.overflow = True, "crop"
+    return out
+
+
+def apply_overlays(state: State, lines: List[Text], hits: List[Hit], width: int, height: int) -> List[Hit]:
+    """Draw the toast (bottom-right, above the action bar) and its sparkles; the toast swallows clicks."""
+    if not state.toast:
+        return hits
+    t = state.now - state.toast[1]
+    box = state.toast[0].lines(t, max(4, min(52, width - 2)))
+    top = height - 2 - len(box)
+    if not box or top < 2:
+        return hits
+    tw = max(b.cell_len for b in box)
+    x0 = max(0, width - tw - 1)
+    blocked = []  # type: List[Hit]
+    if state.sparkle:
+        sp, t0 = state.sparkle
+        area_top, area_left = top + len(box) // 2 - sp.height // 2, x0 + tw // 2 - sp.width // 2
+        for r, c, ch, style in sp.cells(state.now - t0):
+            row, col = area_top + r, area_left + c
+            inside = top <= row < top + len(box) and x0 <= col < x0 + tw
+            if 2 <= row < height - 2 and 0 <= col < width and not inside:
+                lines[row] = put(lines[row], col, Text(ch, style=style))
+    for i, b in enumerate(box):
+        lines[top + i] = put(lines[top + i], x0, b)
+        blocked.append((top + i, x0, x0 + b.cell_len, ("noop",)))
+    return blocked + hits
 
 
 def build_frame(state: State, width: int, height: int) -> Frame:
@@ -586,8 +976,8 @@ def build_frame(state: State, width: int, height: int) -> Frame:
     body_h = max(0, height - 4)
     body = body_lines(state, width, body_h)[:body_h]
     body += [Line() for _ in range(body_h - len(body))]
-    rows = ([header_line(state.balance, width), tabs_line(state.tab)] + body
-            + [action_line(state), status_line(state)])[:height]
+    rows = ([header_line(state, width), tabs_line(state.tab, width)] + body
+            + [action_line(state, width), status_line(state)])[:height]
     lines, spans, row_hits = [], [], []  # type: List[Text], List[Hit], List[Hit]
     for r, ln in enumerate(rows):
         ln.text.truncate(width, overflow="crop", pad=True)
@@ -595,7 +985,8 @@ def build_frame(state: State, width: int, height: int) -> Frame:
         spans += [(r, x0, min(x1, width), a) for x0, x1, a in ln.spans if x0 < width]
         if ln.action:
             row_hits.append((r, 0, width, ln.action))
-    return Frame(lines, spans + row_hits)
+    hits = apply_overlays(state, lines, spans + row_hits, width, height)
+    return Frame(lines, hits)
 
 
 # --- form validation ---
@@ -646,6 +1037,16 @@ def refresh(state: State, api: ApiCall) -> None:
     load(state, api)
 
 
+def init(state: State, api: ApiCall) -> None:
+    """First load: overview data, stored sound setting, bars filling in."""
+    load(state, api)
+    try:
+        state.sound = bool(api("sound", {}).get("sound", True))
+    except Exception:
+        pass
+    state.bars_t0 = state.now
+
+
 def open_form(state: State, name: str, api: ApiCall) -> None:
     try:
         cats = api("categories", {})
@@ -660,17 +1061,32 @@ def submit(state: State, api: ApiCall) -> None:
     form.errors = errors
     if errors:
         form.focus = next((f.key for f in form.visible() if f.key in errors), form.focus)
-        state.set_status("Kiểm tra lại các ô được đánh dấu ⚠", False)
+        fail(state, "Kiểm tra lại các ô được đánh dấu %s" % G["warn"])
         return
     try:
         api(cmd, params)
     except Exception as e:  # LookupError / ValueError from api: keep the form open
         form.error = str(e)
-        state.set_status(str(e), False)
+        fail(state, str(e))
         return
     state.form = None
-    state.set_status("Đã lưu %s: %s" % (params.get("name") or params["category"], money(params["amount"])))
-    refresh(state, api)
+    income = params.get("income") or cmd == "income"
+    what = {"plan add": "dòng tiền", "expense": "khoản chi", "income": "khoản thu"}[cmd]
+    amount = money(params["amount"] if income else -params["amount"], signed=True)
+    celebrate(state, api, "Đã lưu %s %s %s %s" % (what, G["ok"], params.get("name") or params["category"], amount),
+              "save")
+
+
+def toggle_sound(state: State, api: ApiCall) -> None:
+    want = not state.sound
+    try:
+        state.sound = bool(api("sound", {"state": "on" if want else "off"}).get("sound", want))
+    except Exception as e:
+        fail(state, str(e))
+        return
+    state.set_status("Đã bật âm thanh" if state.sound else "Đã tắt âm thanh")
+    toast(state, state.status[0], "info")
+    play(state, "tab")
 
 
 def _form_key(state: State, key: str, api: ApiCall) -> None:
@@ -701,6 +1117,9 @@ def switch_tab(state: State, tab: int, api: ApiCall) -> None:
     state.form = state.confirm = None
     if state.tab != tab:
         state.tab, state.selected, state.scroll = tab, None, 0
+        play(state, "tab")
+        if tab in (0, 3):
+            state.bars_t0 = state.now
     load(state, api)
 
 
@@ -715,11 +1134,10 @@ def handle_key(state: State, key: str, api: ApiCall) -> None:
             try:
                 api("rm", {"id": tid})
             except Exception as e:
-                state.set_status(str(e), False)
+                fail(state, str(e))
                 return
             state.selected = None
-            state.set_status("Đã xoá giao dịch #%d" % tid)
-            refresh(state, api)
+            celebrate(state, api, "Đã xoá giao dịch #%d" % tid, "delete", "info", sparkle=False)
         elif key in ("n", "esc"):
             state.confirm = None
             state.set_status("Không xoá")
@@ -737,6 +1155,8 @@ def handle_key(state: State, key: str, api: ApiCall) -> None:
         state.selected = 0 if state.selected is None else max(0, state.selected - 1)
     elif key == "esc":
         state.selected = None
+    elif key == "m":
+        toggle_sound(state, api)
     elif key in ("a", "i", "p"):
         open_form(state, {"a": "expense", "i": "income", "p": "plan"}[key], api)
     elif key == "d" and state.tab == 2 and state.selected is not None:
@@ -744,10 +1164,11 @@ def handle_key(state: State, key: str, api: ApiCall) -> None:
         try:
             api("plan done", {"id": p["id"], "date": state.today.isoformat()})
         except Exception as e:
-            state.set_status(str(e), False)
+            fail(state, str(e))
             return
-        state.set_status("Đã thực hiện: %s (%s)" % (p["name"], money(p["amount"])))
-        refresh(state, api)
+        income = p["kind"] == "income"
+        celebrate(state, api, "%s %s %s %s" % ("Đã nhận" if income else "Đã thanh toán", G["ok"], p["name"],
+                                              money(p["amount"] if income else -p["amount"], signed=True)), "done")
     elif key == "x" and state.tab == 1 and state.selected is not None:
         t = items[state.selected]
         state.confirm = {"id": t["id"], "label": "%s %s ngày %s" % (t["category"], money(t["amount"]),
@@ -784,7 +1205,7 @@ def handle_click(state: State, x: int, y: int, api: ApiCall) -> None:
 
 
 def dispatch(state: State, event: Event, api: ApiCall) -> None:
-    if not event:
+    if not event or event in ("tick", "resize"):
         return
     if isinstance(event, tuple):
         _, b, x, y = event
@@ -842,18 +1263,19 @@ def parse_input(buf: bytes) -> Tuple[Event, int]:
 
 
 class KeyReader:
-    """Blocking reader of input events; returns "resize" when the wake pipe fires."""
+    """Reader of input events: blocks forever when timeout is None, returns "tick" when it expires
+    and "resize" when the wake pipe fires."""
 
     def __init__(self, fd: int, wake_r: int):
         self.fd, self.wake_r, self.buf = fd, wake_r, b""
 
-    def next(self) -> Event:
+    def next(self, timeout: Optional[float] = None) -> Event:
         while True:
             event, n = parse_input(self.buf)
             if n:
                 self.buf = self.buf[n:]
                 return event
-            r, _, _ = select.select([self.fd, self.wake_r], [], [], 0.05 if self.buf else None)
+            r, _, _ = select.select([self.fd, self.wake_r], [], [], 0.05 if self.buf else timeout)
             if self.wake_r in r:
                 os.read(self.wake_r, 64)
                 return "resize"
@@ -862,6 +1284,19 @@ class KeyReader:
             elif self.buf:  # an incomplete sequence timed out: lone ESC, or junk
                 lone_esc, self.buf = self.buf == b"\x1b", b""
                 return "esc" if lone_esc else ""
+            else:
+                return "tick"
+
+
+def run_loop(state: State, next_event: Callable[[Optional[float]], Event], draw: Callable[[], None],
+             api: ApiCall, clock: Callable[[], float]) -> None:
+    """Draw, then wait: forever when idle (zero redraws), FRAME_S while an animation runs."""
+    while state.running:
+        state.now = clock()
+        draw()
+        event = next_event(FRAME_S if state.animating() else None)
+        state.now = clock()
+        dispatch(state, event, api)
 
 
 def _default_api(store, today: date) -> ApiCall:
@@ -871,15 +1306,17 @@ def _default_api(store, today: date) -> ApiCall:
     return call
 
 
-def run_tui(store, today: date, api: Optional[ApiCall] = None) -> None:
+def run_tui(store, today: date, api: Optional[ApiCall] = None, clock: Callable[[], float] = time.monotonic) -> None:
     import termios
     import tty
     from rich.console import Console
     from rich.live import Live
 
+    use_ascii(_ascii_default())
     call = api or _default_api(store, today)
     state = State(today)
-    load(state, call)
+    state.now = clock()
+    init(state, call)
 
     fd = sys.stdin.fileno()
     old = termios.tcgetattr(fd)
@@ -894,12 +1331,13 @@ def run_tui(store, today: date, api: Optional[ApiCall] = None) -> None:
                   redirect_stdout=False, redirect_stderr=False) as live:
             console.file.flush()
             os.write(out_fd, MOUSE_ON.encode())
-            while state.running:
+
+            def draw() -> None:
                 width, height = console.size
                 frame = build_frame(state, width, height)
                 state.hits = frame.hits
                 live.update(frame.renderable(), refresh=True)
-                dispatch(state, reader.next(), call)
+            run_loop(state, reader.next, draw, call, clock)
     except KeyboardInterrupt:
         pass
     finally:

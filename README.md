@@ -54,6 +54,13 @@ Gõ `eco` (hoặc `eco ui`) để mở. **Mọi thao tác đều bấm chuột �
 
 Phím tắt (luôn ghi sẵn trên từng nút): `1`–`4` tab · `a` thêm chi · `i` thêm thu · `p` thêm dòng tiền · `d` xong · `x` xoá · `↑↓` chọn · `Enter` lưu · `Esc` huỷ · `q` thoát.
 
+### Giao diện
+
+- **Co giãn theo terminal**: dưới 60 cột dùng bố cục gọn (icon + nhãn ngắn, một cột); 60–119 cột một cột; từ 120 cột tab Tổng quan chia hai cột (Ngân sách | Sắp tới) và danh sách có thêm Ghi chú/Lặp; từ 160 cột thêm sparkline số dư 30 ngày. Không vỡ layout xuống 40×12.
+- **Animation**: lưu khoản chi/thu/dòng tiền hiện toast pastel bo tròn + sparkle và số dư nhảy theo; `✓ Xong` hiện toast "Đã thanh toán…"; lỗi hiện toast lỗi. Khi rảnh TUI chờ input hoàn toàn (0% CPU, không redraw).
+- **Âm thanh (SFX)**: nút `🔊/🔇` hoặc phím `m` bật/tắt và ghi nhớ lựa chọn. Tiếng phát khi lưu, `✓ Xong`, xoá, lỗi, chuyển tab, và cảnh báo (lưu xong làm dự báo âm tiền hoặc ngân sách ≥100%). Tắt tạm thời bằng `ECO_SOUND=0`.
+- **ASCII**: đặt `ECO_ASCII=1` (hoặc `TERM=linux`/`dumb`) để thay emoji/kaomoji bằng ký tự ASCII.
+
 ---
 
 ## Hướng dẫn sử dụng các lệnh CLI (`eco`)
@@ -168,6 +175,17 @@ eco goal 50tr --by 2027-06-01
 ```bash
 eco dash
 ```
+
+### 8. Bật/tắt âm thanh hiệu ứng (`eco sound`)
+
+```bash
+eco sound          # xem trạng thái
+eco sound off      # tắt SFX
+eco sound on       # bật lại
+```
+
+Với `--json`, kết quả là `{"ok": true, "command": "sound", "data": {"sound": true}}`.
+Trong TUI, bấm nút `🔊/🔇` hoặc nhấn `m` để đổi và ghi nhớ; `ECO_SOUND=0` tắt tạm mà không đổi cài đặt.
 
 ---
 

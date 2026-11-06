@@ -74,6 +74,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("dash", help="bảng tổng quan")
     sub.add_parser("categories", help="danh mục đã dùng (nhiều nhất trước)")
     sub.add_parser("ui", help="giao diện toàn màn hình (TUI)")
+    s = sub.add_parser("sound", help="bật/tắt âm thanh hiệu ứng trong TUI")
+    s.add_argument("state", nargs="?", choices=["on", "off"])
     return p
 
 

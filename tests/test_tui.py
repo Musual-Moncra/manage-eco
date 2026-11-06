@@ -3,11 +3,21 @@ from datetime import date
 from unittest import mock
 
 from rich.cells import cell_len
+from rich.text import Text
 
 from manage_eco import api, fmt, tui
 from manage_eco.db import Store
 
 TODAY = date(2026, 11, 6)
+_SFX = mock.patch.object(tui.sfx, "play", return_value=True)
+
+
+def setUpModule():
+    _SFX.start()  # never spawn real audio players from tests
+
+
+def tearDownModule():
+    _SFX.stop()
 
 DASH = {"balance": 23_715_000,
         "month": {"month": "2026-11", "income": 15_000_000, "expense": 85_000, "net": 14_915_000},
@@ -35,7 +45,8 @@ class FakeApi:
             raise self.fail
         return {"dash": DASH, "list": {"transactions": TXS, "balance": 1}, "plan list": {"plans": PLANS},
                 "budget status": {"month": "2026-11", "budgets": DASH["budgets"]},
-                "categories": {"expense": ["ăn uống", "đi lại", "nhà"], "income": ["lương"]}}.get(cmd, {})
+                "categories": {"expense": ["ăn uống", "đi lại", "nhà"], "income": ["lương"]},
+                "sound": {"sound": params.get("state", "on") != "off"}}.get(cmd, {})
 
     def made(self, cmd):
         return [p for c, p in self.calls if c == cmd]
@@ -106,7 +117,7 @@ class FrameTest(unittest.TestCase):
             self.assertEqual([t[2] for t in tabs], [0, 1, 2, 3])
             self.assertTrue(all(a[1] <= b[0] for a, b in zip(tabs, tabs[1:])), "tabs overlap")
             keys = {a[1]: r for r, x0, x1, a in f.hits if a[0] == "key"}
-            self.assertEqual(set(keys), {"a", "i", "p", "q"})
+            self.assertEqual(set(keys), {"a", "i", "p", "m", "q"})
             self.assertEqual(set(keys.values()), {22})
             self.assertTrue(all(x1 <= w for r, x0, x1, a in f.hits))
 
@@ -371,6 +382,277 @@ class ParseInputTest(unittest.TestCase):
         self.assertEqual(p(b"\x1b[<0;12;3m"), ("", 10))  # release ignored
         self.assertEqual(p(b"\x1b[<64;1;1Mq"), (("mouse", 64, 1, 1), 10))
         self.assertEqual(p(b"\x1b[<65;1"), (None, 0))  # incomplete
+
+
+def cells(plain, x0, x1):
+    """Characters of a plain line occupying cells [x0, x1)."""
+    out, pos = "", 0
+    for ch in plain:
+        if x0 <= pos < x1:
+            out += ch
+        pos += cell_len(ch)
+    return out
+
+
+class ResponsiveTest(unittest.TestCase):
+    SIZES = ((40, 12), (50, 20), (80, 24), (120, 30), (170, 45))
+
+    def setUp(self):
+        self.api = FakeApi()
+        self.state = tui.State(TODAY)
+        tui.init(self.state, self.api)
+
+    def check(self, w, h, what):
+        f = frame(self.state, w, h)
+        self.assertEqual(len(f.lines), h, what)
+        for r, t in enumerate(f.lines):
+            self.assertEqual(cell_len(t.plain), w, (what, r, t.plain))
+        for r, x0, x1, a in f.hits:
+            self.assertTrue(0 <= r < h and 0 <= x0 < x1 <= w, (what, r, x0, x1, a))
+            label = cells(f.lines[r].plain, x0, x1)
+            self.assertTrue(label.strip(), (what, a))  # nothing clickable is blank
+            if a[0] == "tab" and r == 1:  # the tab bar (rows elsewhere may also open a tab)
+                i = a[1]
+                self.assertTrue(any(s in label for s in (tui.TABS_SHORT[i], tui.TAB_ICONS[i], str(i + 1))),
+                                (what, label))
+            if a[0] == "key" and a[1] not in ("enter", "esc"):
+                self.assertIn(a[1], label, (what, label))
+        return f
+
+    def test_every_screen_at_every_size(self):
+        for w, h in self.SIZES:
+            for tab in range(4):
+                tui.switch_tab(self.state, tab, self.api)
+                self.state.selected = 0 if tab in (1, 2) else None
+                self.check(w, h, (w, h, "tab", tab))
+            tui.handle_key(self.state, "p", self.api)
+            for key in ["tab"] * 3 + ["right"] * 3 + ["tab"] * 2:  # Lặp = Hàng tháng, focus Ngày bắt đầu
+                tui.handle_key(self.state, key, self.api)
+            self.assertEqual((self.state.form.values["every"], self.state.form.focus), ("monthly", "due"))
+            self.check(w, h, (w, h, "plan form"))
+            tui.handle_key(self.state, "esc", self.api)
+            tui.switch_tab(self.state, 1, self.api)
+            self.state.selected = 0
+            tui.handle_key(self.state, "x", self.api)
+            self.check(w, h, (w, h, "confirm"))
+            tui.handle_key(self.state, "n", self.api)
+
+    def test_breakpoints(self):
+        out50 = text(frame(self.state, 50, 20)).splitlines()
+        self.assertIn("Tổng", out50[1])
+        self.assertNotIn("Tổng quan", out50[1])
+        out80 = text(frame(self.state, 80, 24))
+        self.assertIn("Tổng quan", out80)
+        self.assertFalse(any("Ngân sách" in l and "Sắp tới" in l for l in out80.splitlines()))
+        out120 = text(frame(self.state, 120, 30))
+        self.assertTrue(any("Ngân sách" in l and "Sắp tới 30 ngày" in l for l in out120.splitlines()))
+        self.assertNotIn("Số dư 30 ngày tới", out120)
+        out170 = text(frame(self.state, 170, 40))
+        self.assertIn("Số dư 30 ngày tới", out170)
+        self.assertTrue(any(c in out170 for c in "▁▂▃▄▅▆▇█"))
+        tui.switch_tab(self.state, 1, self.api)
+        self.assertIn("#40", text(frame(self.state, 140, 30)))
+        self.assertNotIn("#40", text(frame(self.state, 80, 24)))
+        self.assertIn("06/11", text(frame(self.state, 50, 20)) + "06/11")  # short dates in compact mode
+        tui.switch_tab(self.state, 2, self.api)
+        self.assertIn("Danh mục", text(frame(self.state, 140, 30)))
+        self.assertIn("hàng tháng · ngày 5", text(frame(self.state, 80, 24)))
+        self.assertNotIn("hàng tháng", text(frame(self.state, 50, 20)))
+
+    def test_lists_use_spare_rows(self):
+        tui.switch_tab(self.state, 1, self.api)
+        for h in (12, 24, 45):
+            rows = [a for _, _, _, a in frame(self.state, 100, h).hits if a[0] == "select"]
+            self.assertEqual(len(rows), min(40, h - 5))
+
+    def test_header_mood(self):
+        out = text(frame(self.state)).splitlines()[0]
+        self.assertIn("(｡•́︿•̀｡)", out)  # FakeApi forecast goes negative
+        self.state.dash = {"lowest": None, "budgets": [{"pct": 85.0}]}
+        self.assertIn("(・_・;)", text(frame(self.state)).splitlines()[0])
+        self.state.dash = {"lowest": None, "budgets": [{"pct": 10.0}]}
+        self.assertIn("(◕‿◕)", text(frame(self.state)).splitlines()[0])
+
+    def test_category_icons(self):
+        cases = {"Ăn uống": "🍜", "tiền nhà": "🏠", "xăng xe": "🛵", "Lương": "💰", "mua sắm": "🛒", "học": "📚",
+                 "điện nước": "💡", "Claude Pro": "💻", "khác": "•", "thuận": "•"}
+        for name, icon in cases.items():
+            self.assertEqual(tui.category_icon(name), icon, name)
+        self.assertEqual(cell_len(tui.cat_label("khác")), cell_len("🍜 khác"))  # aligned with emoji icons
+
+    def test_ascii_mode(self):
+        tui.use_ascii(True)
+        try:
+            for tab in range(4):
+                tui.switch_tab(self.state, tab, self.api)
+                f = self.check(80, 24, ("ascii", tab))
+                for glyph in ("█", "🏠", "▐", "◆", "(◕‿◕)", "(｡•́︿•̀｡)"):
+                    self.assertNotIn(glyph, text(f))
+        finally:
+            tui.use_ascii(False)
+
+
+@unittest.skipIf(tui.anim is None, "anim.py not available")
+class AnimationTest(unittest.TestCase):
+    def setUp(self):
+        self.api = FakeApi()
+        self.state = tui.State(TODAY)
+        self.state.now = 100.0
+        tui.init(self.state, self.api)
+        tui.play_calls = tui.sfx.play
+        tui.sfx.play.reset_mock()
+
+    def at(self, t, w=100, h=30):
+        self.state.now = t
+        return frame(self.state, w, h)
+
+    def save_expense(self):
+        tui.dispatch(self.state, "a", self.api)
+        click(self.state, ("chip", "amount", "50k"), self.api, 100, 30)
+        click(self.state, ("chip", "category", "nhà"), self.api, 100, 30)
+        tui.dispatch(self.state, "enter", self.api)
+
+    def test_toast_overlay_after_save(self):
+        self.state.now = 200.0
+        self.save_expense()
+        f = self.at(200.5)
+        box = [r for r, t in enumerate(f.lines[:-2]) if "Đã lưu khoản chi" in t.plain]
+        self.assertEqual(len(box), 1)
+        r = box[0]
+        self.assertLessEqual(r + 1, 30 - 3)  # bottom border (r + 1) sits above the action bar (row 28)
+        self.assertIn("+ Chi", f.lines[28].plain)  # layout not shifted
+        self.assertTrue(f.lines[r].plain.rstrip().endswith("│"))  # right-aligned box
+        x = cell_len(f.lines[r].plain.rstrip()) - 3
+        self.assertEqual(tui.hit_at(f.hits, r, x), ("noop",))  # toast is not click-through
+        self.assertTrue(self.state.animating())
+        f = self.at(203.0)
+        self.assertNotIn("Đã lưu khoản chi", text(f).replace(self.state.status[0], ""))
+        self.assertFalse(self.state.animating())
+        self.assertFalse(any(a == ("noop",) for *_, a in f.hits))
+
+    def test_sparkle_and_count_up(self):
+        self.state.now = 300.0
+        before = self.state.balance
+        self.save_expense()
+        self.assertIsNotNone(self.state.sparkle)
+        self.state.balance = before - 50_000  # FakeApi balance does not change; simulate the new value
+        self.state.count = (before, before - 50_000, 300.0)
+        mid = self.at(300.2)
+        self.assertTrue(any(c in text(mid) for c in "✦✧⋆˚♡✿"))
+        shown = self.state.shown_balance()
+        self.assertTrue(before - 50_000 < shown < before, shown)
+        self.at(301.0)
+        self.assertEqual(self.state.shown_balance(), before - 50_000)
+
+    def test_error_toast_has_no_sparkle(self):
+        self.api.fail = ValueError("hỏng rồi")
+        self.state.now = 400.0
+        self.save_expense()
+        self.assertIsNone(self.state.sparkle)
+        self.assertEqual(self.state.toast[0].kind, "error")
+        self.assertIn("hỏng rồi", text(self.at(400.5)))
+        tui.sfx.play.assert_any_call("error", enabled=True)
+
+    def test_bar_fill_on_tab_switch(self):
+        self.state.now = 500.0
+        tui.switch_tab(self.state, 3, self.api)
+        early = text(self.at(500.05)).count("█")
+        late = text(self.at(501.0)).count("█")
+        self.assertLess(early, late)
+
+    def test_keys_work_during_animation(self):
+        self.state.now = 600.0
+        self.save_expense()
+        self.at(600.1)
+        click(self.state, ("tab", 2), self.api, 100, 30)  # the tab row is never covered by the toast
+        self.assertEqual(self.state.tab, 2)
+        tui.dispatch(self.state, "a", self.api)
+        self.assertIsNotNone(self.state.form)
+
+
+class LoopTest(unittest.TestCase):
+    def test_blocks_when_idle_and_ticks_while_animating(self):
+        api = FakeApi()
+        state = tui.State(TODAY)
+        tui.load(state, api)  # no init: no bar animation pending
+        timeouts, draws = [], []
+        times = iter([0.0, 0.0, 10.0, 10.0, 10.5, 10.5, 20.0, 20.0, 20.0])
+        events = iter(["tick", "a", "esc", "q"])
+        if tui.anim is not None:
+            events = iter(["tick", "m", "tick", "q"])  # m: sound toggle pops an info toast
+
+        def next_event(timeout):
+            timeouts.append(timeout)
+            return next(events)
+
+        tui.run_loop(state, next_event, lambda: draws.append(state.now), api, lambda: next(times))
+        self.assertIsNone(timeouts[0])  # idle: blocking read, no timer
+        if tui.anim is not None:
+            self.assertEqual(timeouts[2], tui.FRAME_S)  # toast running: ~33 ms frames
+            self.assertIsNone(timeouts[3])  # finished: back to blocking
+        self.assertEqual(len(draws), 4)  # one draw per event, no busy loop
+
+
+class SoundTest(unittest.TestCase):
+    def setUp(self):
+        self.api = FakeApi()
+        self.state = tui.State(TODAY)
+        tui.init(self.state, self.api)
+        tui.sfx.play.reset_mock()
+
+    def events(self):
+        return [c.args[0] for c in tui.sfx.play.call_args_list]
+
+    def test_events(self):
+        click(self.state, ("tab", 2), self.api)
+        click(self.state, ("select", 0), self.api)
+        click(self.state, ("key", "d"), self.api)
+        click(self.state, ("tab", 1), self.api)
+        click(self.state, ("select", 0), self.api)
+        click(self.state, ("key", "x"), self.api)
+        click(self.state, ("key", "y"), self.api)
+        self.assertEqual(self.events(), ["tab", "done", "tab", "delete"])
+
+    def test_save_warns_when_forecast_negative(self):
+        tui.dispatch(self.state, "a", self.api)
+        click(self.state, ("chip", "amount", "50k"), self.api)
+        click(self.state, ("chip", "category", "nhà"), self.api)
+        tui.dispatch(self.state, "enter", self.api)
+        self.assertEqual(self.events(), ["warn"])  # FakeApi forecast dips below zero
+
+    def test_save_plays_save_when_all_fine(self):
+        calm = dict(DASH, lowest=None, budgets=[])
+        with mock.patch.dict(DASH, calm):
+            tui.dispatch(self.state, "i", self.api)
+            click(self.state, ("chip", "amount", "50k"), self.api)
+            click(self.state, ("chip", "category", "lương"), self.api)
+            tui.dispatch(self.state, "enter", self.api)
+        self.assertEqual(self.events(), ["save"])
+
+    def test_error_sound(self):
+        tui.dispatch(self.state, "a", self.api)
+        tui.dispatch(self.state, "enter", self.api)  # empty form: validation error
+        self.assertEqual(self.events(), ["error"])
+
+    def test_toggle_persists_and_mutes(self):
+        self.assertIn("🔊", text(frame(self.state)))
+        click(self.state, ("key", "m"), self.api)
+        self.assertEqual(self.api.made("sound")[-1], {"state": "off"})
+        self.assertFalse(self.state.sound)
+        self.assertIn("🔇", text(frame(self.state)))
+        click(self.state, ("tab", 3), self.api)
+        tui.sfx.play.assert_called_with("tab", enabled=False)
+        tui.dispatch(self.state, "m", self.api)
+        self.assertEqual(self.api.made("sound")[-1], {"state": "on"})
+        self.assertTrue(self.state.sound)
+
+    def test_initial_sound_setting(self):
+        api = FakeApi()
+        api.sound_off = True
+        orig = api.__call__
+        state = tui.State(TODAY)
+        tui.init(state, lambda cmd, params: {"sound": False} if cmd == "sound" else orig(cmd, params))
+        self.assertFalse(state.sound)
 
 
 class RealApiTest(unittest.TestCase):

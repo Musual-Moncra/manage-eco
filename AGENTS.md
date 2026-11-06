@@ -29,6 +29,9 @@ Global flags:
 | `--db PATH` | SQLite file; default `$ECO_DB` or `~/.manage_eco.db` |
 | `--today YYYY-MM-DD` | "today" for relative dates and default month |
 
+Set `ECO_SOUND=0` to mute TUI sound effects for a run without changing the
+stored `sound` setting.
+
 Amounts accept integers, unit suffixes (`20000000`, `1.250.000`, `1,250,000`,
 `1.5tr`/`1.5m`, `200k`) and arithmetic (rounded to đồng):
 
@@ -262,6 +265,22 @@ python3 -m manage_eco --json --db eco.db --today 2026-11-06 categories
 Categories split by kind, most used first (ties alphabetical). Plan and budget
 categories are included with count 0.
 
+### `sound [on|off]`
+
+```bash
+python3 -m manage_eco --json --db eco.db sound        # read
+python3 -m manage_eco --json --db eco.db sound off    # mute
+```
+
+```json
+{"ok": true, "command": "sound", "data": {"sound": false}}
+```
+
+Reads or persists the TUI sound setting (`{"sound": bool}`, default on). In the
+TUI, the `🔊/🔇` button or `m` toggles it; `ECO_SOUND=0` mutes only for that
+run. Sounds play on save, done, delete, error, tab switch, and warn (a save
+that makes the forecast negative or a budget ≥100%).
+
 ## Python API
 
 `manage_eco.api.execute(cmd, params, store, today)` returns the same `data`
@@ -290,7 +309,8 @@ print(execute("dash", {}, store, today))
 ```
 
 Params mirror the CLI arguments: `amount`, `category`, `note`, `date`, `id`,
-`month`, `all`, `name`, `due`, `every`, `day`, `income`, `target`, `by`, `days`.
+`month`, `all`, `name`, `due`, `every`, `day`, `income`, `target`, `by`, `days`,
+`state` (`sound`: `"on"`/`"off"`, omitted to read).
 `store` is a `manage_eco.db.Store`; `today` is a `datetime.date`.
 
 ## Memory

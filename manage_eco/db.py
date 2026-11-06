@@ -26,6 +26,10 @@ CREATE TABLE IF NOT EXISTS plans (
     status TEXT NOT NULL DEFAULT 'pending',
     day INTEGER CHECK (day IS NULL OR day BETWEEN 1 AND 31)
 );
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS budgets (
     category TEXT PRIMARY KEY,
     "limit" INTEGER NOT NULL CHECK ("limit" > 0)
@@ -130,3 +134,15 @@ class Store:
     def list_budgets(self) -> List[Budget]:
         rows = self.conn.execute('SELECT category, "limit" FROM budgets ORDER BY category').fetchall()
         return [Budget(r["category"], r["limit"]) for r in rows]
+
+    # --- settings ---
+    def get_setting(self, key: str, default: Optional[str] = None) -> Optional[str]:
+        row = self.conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+        return row["value"] if row else default
+
+    def set_setting(self, key: str, value: str) -> None:
+        self.conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, value),
+        )
+        self.conn.commit()

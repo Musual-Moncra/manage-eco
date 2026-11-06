@@ -225,11 +225,22 @@ def categories(params, store, today):
     return {"expense": rank(counts[EXPENSE]), "income": rank(counts[INCOME])}
 
 
+def sound(params, store, today):
+    """Get or set sound effects: params {"state": "on"|"off"} or {} to read."""
+    state = params.get("state")
+    if state not in (None, ""):
+        state = str(state).lower()
+        if state not in ("on", "off"):
+            raise ValueError("sound phải là on|off")
+        store.set_setting("sound", state)
+    return {"sound": store.get_setting("sound", "on") == "on"}
+
+
 COMMANDS = {
     "income": income, "expense": expense, "list": list_, "rm": rm, "summary": summary,
     "plan add": plan_add, "plan list": plan_list, "plan done": plan_done, "plan cancel": plan_cancel,
     "budget set": budget_set, "budget status": budget_status,
-    "forecast": forecast, "goal": goal, "dash": dash, "categories": categories,
+    "forecast": forecast, "goal": goal, "dash": dash, "categories": categories, "sound": sound,
 }  # type: Dict[str, Callable[[dict, Any, date], dict]]
 
 
