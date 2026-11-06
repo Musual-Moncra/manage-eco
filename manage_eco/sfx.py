@@ -15,7 +15,7 @@ import wave
 from typing import Dict, List, Optional, Tuple
 
 RATE = 22050
-EVENTS = ("save", "done", "delete", "error", "tab", "warn")
+EVENTS = ("save", "done", "delete", "error", "tab", "warn", "click")
 
 # (frequency Hz, duration s, volume 0..1) notes per event; 0 Hz = rest
 _NOTES = {
@@ -25,6 +25,7 @@ _NOTES = {
     "error": [(196.0, 0.09, 0.45), (0, 0.04, 0), (196.0, 0.12, 0.45)],         # low double buzz
     "tab": [(2637.0, 0.018, 0.18)],                                            # soft tick
     "warn": [(659.3, 0.09, 0.35), (523.3, 0.16, 0.35)],                        # E5 → C5
+    "click": [(1760.0, 0.012, 0.22), (2349.3, 0.05, 0.16)],                    # tiny "ping"
 }  # type: Dict[str, List[Tuple[float, float, float]]]
 
 _SQUARE = {"error"}  # buzzier timbre

@@ -10,7 +10,10 @@ from manage_eco.anim import (
     ICON_STROKES,
     ICON_STROKES_8,
     SYMBOL_SPARKLES,
+    Glow,
     PixelPopup,
+    Press,
+    Ripple,
     Sparkle,
     Toast,
     ascii_mode,
@@ -18,6 +21,7 @@ from manage_eco.anim import (
     count_up,
     ease_out_back,
     ease_out_cubic,
+    slide,
 )
 
 
@@ -234,6 +238,42 @@ class AnimTest(unittest.TestCase):
             # Too small even for compact -> None
             self.assertIsNone(popup.frame(0.8, 12, 6))
             self.assertEqual(popup.size(12, 6), (0, 0))
+
+    def test_v7_ripple_press_slide_glow(self):
+        with patch.dict(os.environ, {"ECO_ASCII": "0", "TERM": "xterm-256color"}, clear=False):
+            rip = Ripple(10, 20, glyphs="symbol", duration=0.35)
+            self.assertFalse(rip.done(0.1))
+            self.assertTrue(rip.done(0.35))
+            c0 = rip.cells(0.0)
+            self.assertEqual(len(c0), 1)
+            self.assertEqual((c0[0][0], c0[0][1]), (10, 20))
+            c_mid = rip.cells(0.2)
+            self.assertGreater(len(c_mid), 4)
+            for _, _, ch, _ in c_mid:
+                self.assertIn(ch, ("·", "∘", "○", "◌"))
+            self.assertEqual(rip.cells(0.35), [])
+
+            rip_ascii = Ripple(5, 5, glyphs="ascii", duration=0.35)
+            for _, _, ch, _ in rip_ascii.cells(0.2):
+                self.assertIn(ch, (".", "o", "O"))
+
+            pr = Press(duration=0.12)
+            self.assertTrue(pr.active(0.0))
+            self.assertTrue(pr.active(0.06))
+            self.assertFalse(pr.active(0.12))
+            self.assertTrue(pr.done(0.12))
+
+            self.assertEqual(slide(10, 30, 0.0, duration=0.18), 10)
+            self.assertEqual(slide(10, 30, 0.18, duration=0.18), 30)
+            self.assertGreater(slide(10, 30, 0.09, duration=0.18), 20)
+
+            glow = Glow(width=80, duration=0.4)
+            self.assertFalse(glow.done(0.2))
+            self.assertTrue(glow.done(0.4))
+            self.assertEqual(glow.style_at(40, 0.4), "")
+            lit_cols = [c for c in range(80) if glow.style_at(c, 0.15)]
+            self.assertGreater(len(lit_cols), 0)
+            self.assertLess(len(lit_cols), 80)
 
 
 if __name__ == "__main__":

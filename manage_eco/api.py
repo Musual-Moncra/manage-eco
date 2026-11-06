@@ -237,6 +237,13 @@ def budget_set(params, store, today):
     return {"budget": {"category": b.category, "limit": b.limit}}
 
 
+def budget_delete(params, store, today):
+    _require(params, "category")
+    if not store.delete_budget(str(params["category"])):
+        raise LookupError("không có ngân sách cho %r" % params["category"])
+    return {"deleted": str(params["category"])}
+
+
 def budget_status(params, store, today):
     y, m = _month(params.get("month"), today)
     return {"month": "%d-%02d" % (y, m), "budgets": plans.budget_status(store, y, m)}
@@ -258,6 +265,49 @@ def forecast(params, store, today):
     rows = cashflow.forecast(store, today, days)
     return {"today": today.isoformat(), "balance": store.balance(today), "days": days,
             "rows": _rows(rows), "lowest": _lowest(rows)}
+
+
+def history(params, store, today):
+    """Daily balance series for charts.
+
+    params: `days` back (default 90; 0 = from first transaction), `ahead` forecast days (default 90).
+    → {today, series:[{date, balance, income, expense}] one row per day ending today,
+       forecast:[{date, balance}] one row per day after today (step series from pending dòng tiền)}
+    """
+    from datetime import timedelta
+    days = int(90 if params.get("days") is None else params["days"])
+    ahead = int(90 if params.get("ahead") is None else params["ahead"])
+    if days < 0 or ahead < 0:
+        raise ValueError("days/ahead phải >= 0")
+    txs = store.list_transactions(end=today)
+    if days == 0:
+        start = txs[0].date if txs else today
+    else:
+        start = today - timedelta(days=days - 1)
+    per_day = {}  # type: Dict[date, list]
+    running = 0
+    for t in txs:
+        if t.date < start:
+            running += t.signed
+        else:
+            row = per_day.setdefault(t.date, [0, 0])
+            row[0 if t.kind == INCOME else 1] += t.amount
+    series = []
+    d = start
+    while d <= today:
+        inc, exp = per_day.get(d, (0, 0))
+        running += inc - exp
+        series.append({"date": d.isoformat(), "balance": running, "income": inc, "expense": exp})
+        d += timedelta(days=1)
+    rows = cashflow.forecast(store, today, ahead)
+    forecast, i, bal = [], 0, running
+    for n in range(1, ahead + 1):
+        d = today + timedelta(days=n)
+        while i < len(rows) and rows[i][0] <= d:
+            bal = rows[i][3]
+            i += 1
+        forecast.append({"date": d.isoformat(), "balance": bal})
+    return {"today": today.isoformat(), "series": series, "forecast": forecast}
 
 
 def goal(params, store, today):
@@ -321,7 +371,8 @@ COMMANDS = {
     "income": income, "expense": expense, "list": list_, "rm": rm, "summary": summary,
     "plan add": plan_add, "plan list": plan_list, "plan done": plan_done, "plan cancel": plan_cancel,
     "edit": edit, "plan edit": plan_edit,
-    "budget set": budget_set, "budget status": budget_status,
+    "budget set": budget_set, "budget status": budget_status, "budget delete": budget_delete,
+    "history": history,
     "forecast": forecast, "goal": goal, "dash": dash, "categories": categories, "sound": sound, "icons": icons,
 }  # type: Dict[str, Callable[[dict, Any, date], dict]]
 

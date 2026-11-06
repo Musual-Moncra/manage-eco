@@ -78,3 +78,9 @@ Commands → data:
 - `plan edit ID [--name] [--amount] [--category] [--due] [--every] [--day] [--kind]` → `{plan}`; `--every` non-monthly clears `day`; `--day` without `--due` moves due to next day N.
 - `Store.get_transaction/update_transaction`.
 - `icons [symbol|emoji|off]` → `{icons: mode}`, default **symbol** (stored setting; env `ECO_ICONS` overrides). symbol = BMP glyphs present in standard monospace fonts, single cell wide, no emoji; emoji = v5 set; off = no icons.
+
+## v7: UI-only operation + stock-style chart (user: "không muốn dùng lệnh, chỉ thao tác giao diện"; "biểu đồ line lên xuống như chứng khoán")
+- api `budget delete {category}` → `{deleted}` (LookupError if none).
+- api `history {days=90 (0 = from first tx), ahead=90}` → `{today, series:[{date, balance, income, expense}] daily ending today, forecast:[{date, balance}] daily after today}`.
+- `manage_eco/chart.py` (antigravity-1), pure, rich only — see docs/BRIEF-v7.md.
+- TUI (claude-2) — see docs/BRIEF-v7.md.

@@ -437,6 +437,21 @@ class JsonCliTest(unittest.TestCase):
         self.assertEqual(p["data"]["month"], "2026-10")
         self.assertEqual(p["data"]["budgets"][0]["spent"], 0)
 
+    def test_budget_delete(self):
+        self.ok("budget", "set", "food", "3000000")
+        self.ok("budget", "set", "transport", "1000000")
+
+        p = self.ok("budget", "delete", "food")
+        self.assert_command(p, "budget delete")
+        self.assert_keys(p["data"], {"deleted"}, exact=True)
+        self.assertEqual(p["data"]["deleted"], "food")
+
+        p = self.ok("budget", "status")
+        self.assertEqual([r["category"] for r in p["data"]["budgets"]], ["transport"])
+
+        self.err("not_found", 1, "budget", "delete", "food")
+        self.err("not_found", 1, "budget", "delete", "missing")
+
     # --- forecast / goal ----------------------------------------------
     def test_forecast(self):
         self.ok("income", "10000000", "salary", "-d", "2026-11-06")
@@ -469,6 +484,77 @@ class JsonCliTest(unittest.TestCase):
         self.assertEqual(p["data"]["days"], 0)
         self.assertEqual(p["data"]["rows"], [])
         self.assertIsNone(p["data"]["lowest"])
+
+    # --- history -------------------------------------------------------
+    def test_history_defaults_empty(self):
+        p = self.ok("history")
+        self.assert_command(p, "history")
+        self.assert_keys(p["data"], {"today", "series", "forecast"}, exact=True)
+        data = p["data"]
+        self.assertEqual(data["today"], TODAY)
+        self.assertEqual(len(data["series"]), 90)
+        self.assertEqual(data["series"][0]["date"], "2026-08-09")
+        self.assertEqual(data["series"][-1]["date"], TODAY)
+        self.assertEqual(len(data["forecast"]), 90)
+        self.assertEqual(data["forecast"][0]["date"], "2026-11-07")
+        self.assertEqual(data["forecast"][-1]["date"], "2027-02-04")
+        for row in data["series"]:
+            self.assert_keys(row, {"date", "balance", "income", "expense"}, exact=True)
+            self.assertEqual(row["balance"], 0)
+        for row in data["forecast"]:
+            self.assert_keys(row, {"date", "balance"}, exact=True)
+            self.assertEqual(row["balance"], 0)
+
+    def test_history_series_balances(self):
+        self.ok("income", "1000000", "salary", "-d", "2026-11-04")
+        self.ok("expense", "200000", "food", "-d", "2026-11-05")
+        self.ok("expense", "100000", "food", "-d", "2026-11-06")
+
+        p = self.ok("history", "--days", "3", "--ahead", "0")
+        data = p["data"]
+        self.assertEqual([r["date"] for r in data["series"]],
+                         ["2026-11-04", "2026-11-05", "2026-11-06"])
+        self.assertEqual(data["series"][0],
+                         {"date": "2026-11-04", "balance": 1000000,
+                          "income": 1000000, "expense": 0})
+        self.assertEqual(data["series"][1],
+                         {"date": "2026-11-05", "balance": 800000,
+                          "income": 0, "expense": 200000})
+        self.assertEqual(data["series"][2],
+                         {"date": "2026-11-06", "balance": 700000,
+                          "income": 0, "expense": 100000})
+        self.assertEqual(data["forecast"], [])
+
+    def test_history_days_zero_starts_at_first_transaction(self):
+        self.ok("income", "500000", "salary", "-d", "2026-10-01")
+        self.ok("expense", "100000", "food", "-d", "2026-11-06")
+
+        p = self.ok("history", "--days", "0", "--ahead", "0")
+        series = p["data"]["series"]
+        self.assertEqual(len(series), 37)
+        self.assertEqual(series[0]["date"], "2026-10-01")
+        self.assertEqual(series[0]["balance"], 500000)
+        self.assertEqual(series[-1]["date"], TODAY)
+        self.assertEqual(series[-1]["balance"], 400000)
+
+    def test_history_forecast_step_values(self):
+        self.ok("income", "1000000", "salary", "-d", "2026-11-04")
+        self.ok("expense", "200000", "food", "-d", "2026-11-05")
+        self.ok("expense", "100000", "food", "-d", "2026-11-06")
+        self.ok("plan", "add", "Bill", "300000", "bills", "--due", "2026-11-08")
+        self.ok("plan", "add", "Pay", "1000000", "job", "--due", "2026-11-10", "--income")
+
+        p = self.ok("history", "--days", "1", "--ahead", "5")
+        forecast = p["data"]["forecast"]
+        self.assertEqual([r["date"] for r in forecast],
+                         ["2026-11-07", "2026-11-08", "2026-11-09",
+                          "2026-11-10", "2026-11-11"])
+        self.assertEqual([r["balance"] for r in forecast],
+                         [700000, 400000, 400000, 1400000, 1400000])
+
+    def test_history_invalid(self):
+        self.err("invalid", 2, "history", "--days", "-1")
+        self.err("invalid", 2, "history", "--ahead", "-1")
 
     def test_goal(self):
         self.ok("income", "2000000", "salary", "-d", "2026-11-06")

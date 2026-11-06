@@ -78,11 +78,17 @@ def build_parser() -> argparse.ArgumentParser:
     s = bsub.add_parser("set")
     s.add_argument("category")
     s.add_argument("amount")
+    s = bsub.add_parser("delete", help="xoá ngân sách của danh mục")
+    s.add_argument("category")
     s = bsub.add_parser("status")
     s.add_argument("--month")
 
     s = sub.add_parser("forecast", help="dự báo số dư theo dòng tiền")
     s.add_argument("--days", type=int, default=90)
+
+    s = sub.add_parser("history", help="số dư theo ngày (cho biểu đồ)")
+    s.add_argument("--days", type=int, default=90, help="số ngày lùi lại (0 = từ đầu)")
+    s.add_argument("--ahead", type=int, default=90, help="số ngày dự báo")
 
     s = sub.add_parser("goal", help="tính tiền cần để dành mỗi tháng")
     s.add_argument("target")

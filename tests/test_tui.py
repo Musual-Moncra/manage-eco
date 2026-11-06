@@ -16,21 +16,30 @@ REAL_PIXEL = getattr(tui.anim, "PixelPopup", None)
 # Most tests check what is under the overlays: they run with the corner toast (as before v6).
 # PixelPopupTest / RealPixelPopupTest switch the centered popup back on.
 _NO_PIXEL = mock.patch.object(tui.anim, "PixelPopup", None, create=True) if tui.anim else None
+# Interaction VFX (v7) draw over text too: off by default, on in VfxTest.
+VFX_NAMES = ("Ripple", "Press", "Glow", "slide")
+REAL_VFX = {n: getattr(tui.anim, n, None) for n in VFX_NAMES}
+_NO_VFX = [mock.patch.object(tui.anim, n, None, create=True) for n in VFX_NAMES] if tui.anim else []
 
 
 def setUpModule():
     _SFX.start()  # never spawn real audio players from tests
     if _NO_PIXEL:
         _NO_PIXEL.start()
+    for patcher in _NO_VFX:
+        patcher.start()
 
 
 def tearDownModule():
     _SFX.stop()
     if _NO_PIXEL:
         _NO_PIXEL.stop()
+    for patcher in _NO_VFX:
+        patcher.stop()
 
 DASH = {"balance": 23_715_000,
-        "month": {"month": "2026-11", "income": 15_000_000, "expense": 85_000, "net": 14_915_000},
+        "month": {"month": "2026-11", "income": 15_000_000, "expense": 85_000, "net": 14_915_000,
+                  "by_category": [{"category": "ăn uống", "amount": 60_000}, {"category": "xăng xe", "amount": 25_000}]},
         "overdue": [{"name": "Điện", "due_date": "2026-11-01"}],
         "budgets": [{"category": "ăn uống", "limit": 3_000_000, "spent": 85_000, "remaining": 2_915_000, "pct": 2.8},
                     {"category": "giải trí", "limit": 100, "spent": 120, "remaining": -20, "pct": 120.0}],
@@ -42,6 +51,18 @@ PLANS = [{"id": 7, "name": "laptop", "amount": 100, "kind": "expense", "due_date
           "category": "do", "recurrence": "once", "status": "pending"},
          {"id": 8, "name": "lương", "amount": 50, "kind": "income", "due_date": "2026-12-05",
           "category": "luong", "recurrence": "monthly", "status": "pending", "day": 5}]
+DONE_PLAN = {"id": 9, "name": "học phí", "amount": 2_000_000, "kind": "expense", "due_date": "2026-09-01",
+             "category": "học", "recurrence": "once", "status": "done", "day": None}
+
+
+def history(days, ahead):
+    from datetime import timedelta
+    days = days or 120
+    series = [{"date": (TODAY - timedelta(days=days - 1 - i)).isoformat(), "balance": 20_000_000 + (i % 9 - 4) * 400_000,
+               "income": 0, "expense": 0} for i in range(days)]
+    forecast = [{"date": (TODAY + timedelta(days=i + 1)).isoformat(), "balance": 23_715_000 - 500_000 * (i // 10)}
+                for i in range(ahead)]
+    return {"today": TODAY.isoformat(), "series": series, "forecast": forecast}
 
 
 class FakeApi:
@@ -53,7 +74,13 @@ class FakeApi:
         self.calls.append((cmd, params))
         if self.fail and cmd not in ("dash", "list", "plan list", "budget status", "categories"):
             raise self.fail
-        return {"dash": DASH, "list": {"transactions": TXS, "balance": 1}, "plan list": {"plans": PLANS},
+        if cmd == "history":
+            return history(params.get("days", 90), params.get("ahead", 90))
+        if cmd == "goal":
+            return {"target": params["target"], "by": params["by"], "needed": 26_285_000, "months_left": 2,
+                    "per_month": 13_142_500}
+        plans = PLANS + [DONE_PLAN] if params.get("all") else PLANS
+        return {"dash": DASH, "list": {"transactions": TXS, "balance": 1}, "plan list": {"plans": plans},
                 "budget status": {"month": "2026-11", "budgets": DASH["budgets"]},
                 "categories": {"expense": ["ăn uống", "đi lại", "nhà"], "income": ["lương"]},
                 "sound": {"sound": params.get("state", "on") != "off"},
@@ -125,12 +152,11 @@ class FrameTest(unittest.TestCase):
         for w in (80, 140):
             f = frame(self.state, w)
             tabs = sorted((x0, x1, a[1]) for r, x0, x1, a in f.hits if a[0] == "tab" and r == 1)
-            self.assertEqual([t[2] for t in tabs], [0, 1, 2, 3])
+            self.assertEqual([t[2] for t in tabs], [0, 1, 2, 3, 4])
             self.assertTrue(all(a[1] <= b[0] for a, b in zip(tabs, tabs[1:])), "tabs overlap")
-            keys = {a[1]: r for r, x0, x1, a in f.hits if a[0] == "key"}
-            self.assertEqual(set(keys) - {"I"}, {"a", "i", "p", "m", "q"})
-            self.assertEqual({r for k, r in keys.items() if k != "I"}, {22})
-            self.assertEqual(keys.get("I", 1), 1)  # icon switch sits on the tab row when it fits
+            bar = {a[1] for r, x0, x1, a in f.hits if a[0] == "key" and r == 22}
+            self.assertEqual(bar, {"a", "i", "p", "s", "q"})  # Tổng quan action bar
+            self.assertIn(("key", "g"), [a for r, x0, x1, a in f.hits if 2 <= r < 22])  # Mục tiêu card
             self.assertTrue(all(x1 <= w for r, x0, x1, a in f.hits))
 
     def test_hit_map_list_rows(self):
@@ -138,10 +164,10 @@ class FrameTest(unittest.TestCase):
         for w in (80, 140):
             f = frame(self.state, w)
             rows = {a[1]: r for r, x0, x1, a in f.hits if a[0] == "select"}
-            self.assertEqual(rows[0], 3)  # header, tabs, column titles, first item
-            self.assertEqual(len(rows), 24 - 4 - 1)
-            self.assertEqual(tui.hit_at(f.hits, 5, w - 1), ("select", 2))
-            self.assertIn("40.000 ₫", f.lines[3].plain)  # newest first
+            self.assertEqual(rows[0], 4)  # header, tabs, month nav, column titles, first item
+            self.assertEqual(len(rows), 24 - 4 - 2)
+            self.assertEqual(tui.hit_at(f.hits, 6, w - 1), ("select", 2))
+            self.assertIn("40.000 ₫", f.lines[4].plain)  # newest first
 
     def test_scroll_keeps_selection_visible(self):
         tui.switch_tab(self.state, 1, self.api)
@@ -372,6 +398,23 @@ class ClickTest(unittest.TestCase):
         self.assertEqual(self.state.tab, 0)
 
 
+class KeyReaderTest(unittest.TestCase):
+    """The real reader over pipes (catches name clashes with the select module, timeouts, resize)."""
+
+    def test_events_tick_and_resize(self):
+        rd, wr = os.pipe()
+        wake_r, wake_w = os.pipe()
+        self.addCleanup(lambda: [os.close(fd) for fd in (rd, wr, wake_r, wake_w)])
+        reader = tui.KeyReader(rd, wake_r)
+        os.write(wr, "a\x1b[<0;3;4Mă".encode())
+        self.assertEqual(reader.next(None), "a")
+        self.assertEqual(reader.next(None), ("mouse", 0, 3, 4))
+        self.assertEqual(reader.next(None), "ă")
+        self.assertEqual(reader.next(0.01), "tick")  # nothing pending: the animation timer expires
+        os.write(wake_w, b"x")
+        self.assertEqual(reader.next(None), "resize")
+
+
 class ParseInputTest(unittest.TestCase):
     def test_keys(self):
         p = tui.parse_input
@@ -475,7 +518,7 @@ class ResponsiveTest(unittest.TestCase):
         tui.switch_tab(self.state, 1, self.api)
         for h in (12, 24, 45):
             rows = [a for _, _, _, a in frame(self.state, 100, h).hits if a[0] == "select"]
-            self.assertEqual(len(rows), min(40, h - 5))
+            self.assertEqual(len(rows), min(40, h - 6))
 
     def test_header_mood(self):
         self.addCleanup(tui.set_icons, "symbol")
@@ -782,6 +825,9 @@ class IconModeTest(unittest.TestCase):
         tui.dispatch(self.state, "p", self.api)
         out.append(text(frame(self.state, w, h)))
         tui.dispatch(self.state, "esc", self.api)
+        tui.dispatch(self.state, "s", self.api)
+        out.append(text(frame(self.state, w, h)))
+        tui.dispatch(self.state, "esc", self.api)
         self.state.now = 60.0
         tui.dispatch(self.state, "a", self.api)
         click(self.state, ("chip", "amount", "50k"), self.api, w, h)
@@ -825,10 +871,17 @@ class IconModeTest(unittest.TestCase):
         self.assertEqual(modes, ["emoji", "off", "symbol"])
         self.assertEqual([p["mode"] for p in self.api.made("icons") if p], ["emoji", "off", "symbol"])
 
-    def test_icon_switch_is_clickable_when_wide(self):
-        click(self.state, ("key", "I"), self.api, 140, 30)
+    def test_settings_chips(self):
+        click(self.state, ("key", "s"), self.api, 80, 24)
+        self.assertTrue(self.state.settings)
+        click(self.state, ("set", "icons", "emoji"), self.api, 80, 24)
         self.assertEqual(tui.ICON_MODE, "emoji")
-        self.assertIn("Icon: emoji", text(frame(self.state, 140, 30)).splitlines()[1])
+        self.assertEqual(self.api.made("icons")[-1], {"mode": "emoji"})
+        self.assertIn("📈", text(frame(self.state)))
+        click(self.state, ("set", "icons", "off"), self.api, 80, 24)
+        self.assertEqual(tui.ICON_MODE, "off")
+        click(self.state, ("key", "esc"), self.api, 80, 24)
+        self.assertFalse(self.state.settings)
 
     def test_env_overrides_stored_mode(self):
         with mock.patch.dict(os.environ, {"ECO_ICONS": "emoji"}):
@@ -992,6 +1045,270 @@ class RealPixelPopupTest(unittest.TestCase):
                 self.assertTrue(all(cell_len(l.plain) == w for l in f.lines))
 
 
+class UiOnlyTest(unittest.TestCase):
+    """v7: every CLI task reachable by clicks."""
+
+    def setUp(self):
+        self.api = FakeApi()
+        self.state = tui.State(TODAY)
+        tui.init(self.state, self.api)
+
+    def keys_on_bar(self, w=100, h=30):
+        return {a[1] for r, x0, x1, a in frame(self.state, w, h).hits if a[0] == "key" and r == h - 2}
+
+    def test_budget_add_edit_delete_by_clicks(self):
+        click(self.state, ("tab", 3), self.api)
+        self.assertIn("b", self.keys_on_bar())
+        click(self.state, ("key", "b"), self.api, 100, 30)
+        self.assertEqual(self.state.form.name, "budget")
+        click(self.state, ("chip", "category", "đi lại"), self.api, 100, 30)
+        click(self.state, ("chip", "amount", "3tr"), self.api, 100, 30)
+        click(self.state, ("key", "enter"), self.api, 100, 30)
+        self.assertEqual(self.api.made("budget set"), [{"category": "đi lại", "amount": 3_000_000}])
+        self.assertIn("Đã lưu ngân sách", self.state.status[0])
+        click(self.state, ("select", 0), self.api)
+        self.assertTrue({"e", "x"} <= self.keys_on_bar())
+        click(self.state, ("key", "e"), self.api, 100, 30)
+        self.assertEqual(self.state.form.title, "Sửa ngân sách: ăn uống")
+        self.assertEqual(self.state.form.values, {"amount": "3.000.000"})
+        click(self.state, ("chip", "amount", "5tr"), self.api, 100, 30)
+        click(self.state, ("key", "enter"), self.api, 100, 30)
+        self.assertEqual(self.api.made("budget set")[-1], {"category": "ăn uống", "amount": 5_000_000})
+        click(self.state, ("select", 1), self.api)
+        click(self.state, ("key", "x"), self.api, 100, 30)
+        self.assertIn("Xoá ngân sách giải trí", text(frame(self.state, 100, 30)))
+        click(self.state, ("key", "y"), self.api, 100, 30)
+        self.assertEqual(self.api.made("budget delete"), [{"category": "giải trí"}])
+        self.assertIn("Đã xoá ngân sách giải trí", self.state.status[0])
+
+    def test_budget_month_nav(self):
+        click(self.state, ("tab", 3), self.api)
+        self.assertIn("Tháng 11/2026", text(frame(self.state)))
+        click(self.state, ("month", "budget", -1), self.api)
+        click(self.state, ("month", "budget", -1), self.api)
+        self.assertEqual(self.api.made("budget status")[-1], {"month": "2026-09"})
+        click(self.state, ("month", "budget", 1), self.api)
+        self.assertEqual(self.api.made("budget status")[-1], {"month": "2026-10"})
+        self.assertIn("Tháng 10/2026", text(frame(self.state)))
+        tui.dispatch(self.state, "]", self.api)
+        self.assertEqual(self.api.made("budget status")[-1], {"month": "2026-11"})
+
+    def test_transactions_month_nav_and_all(self):
+        click(self.state, ("tab", 1), self.api)
+        self.assertIn("Mọi tháng", text(frame(self.state)))
+        click(self.state, ("month", "tx", -1), self.api)
+        self.assertEqual(self.api.made("list")[-1], {"month": "2026-11"})
+        click(self.state, ("month", "tx", -1), self.api)
+        self.assertEqual(self.api.made("list")[-1], {"month": "2026-10"})
+        click(self.state, ("month", "tx", 0), self.api)
+        self.assertEqual(self.api.made("list")[-1], {"all": True})
+
+    def test_plan_filter_and_cancel_by_click(self):
+        click(self.state, ("tab", 2), self.api)
+        click(self.state, ("plans", True), self.api)
+        self.assertEqual(self.api.made("plan list")[-1], {"all": True})
+        out = text(frame(self.state))
+        self.assertIn("học phí", out)
+        self.assertIn("đã xong", out)
+        click(self.state, ("select", 2), self.api)  # the done one: no Xong / Huỷ / Sửa
+        self.assertFalse({"d", "c", "e"} & self.keys_on_bar())
+        click(self.state, ("select", 0), self.api)
+        self.assertTrue({"d", "c", "e"} <= self.keys_on_bar())
+        click(self.state, ("key", "c"), self.api, 100, 30)
+        self.assertIn("Huỷ dòng tiền laptop", text(frame(self.state, 100, 30)))
+        click(self.state, ("key", "n"), self.api, 100, 30)
+        self.assertEqual(self.api.made("plan cancel"), [])
+        self.assertEqual(self.state.status[0], "Không huỷ")
+        click(self.state, ("key", "c"), self.api, 100, 30)
+        click(self.state, ("key", "y"), self.api, 100, 30)
+        self.assertEqual(self.api.made("plan cancel"), [{"id": 7}])
+        self.assertIn("Đã huỷ dòng tiền", self.state.status[0])
+
+    def test_overview_spending_by_category(self):
+        out = text(frame(self.state, 80, 30))
+        self.assertIn("Chi theo danh mục", out)
+        self.assertIn("71%", out)  # 60k of 85k
+        self.assertIn("xăng xe", out)
+
+    def test_goal_card_and_form(self):
+        self.assertIn("Mục tiêu tiết kiệm: chưa đặt", text(frame(self.state, 100, 30)))
+        click(self.state, ("key", "g"), self.api, 100, 30)
+        self.assertEqual(self.state.form.name, "goal")
+        click(self.state, ("chip", "amount", "50tr"), self.api, 100, 30)
+        click(self.state, ("focus", "by"), self.api, 100, 30)
+        click(self.state, ("chip", "by", "31/12/2026"), self.api, 100, 40)
+        click(self.state, ("key", "enter"), self.api, 100, 40)
+        self.assertEqual(self.api.made("goal"), [{"target": 50_000_000, "by": "2026-12-31"}])
+        out = text(frame(self.state, 100, 30))
+        self.assertIn("Mục tiêu 50tr trước 31/12/2026: cần 13,1tr/tháng (2 tháng)", out)
+        click(self.state, ("key", "g"), self.api, 100, 30)  # edit: prefilled
+        self.assertEqual(self.state.form.values, {"amount": "50.000.000", "by": "31/12/2026"})
+
+    def test_every_size_still_exact(self):
+        for w, h in ((40, 12), (50, 20), (80, 24), (170, 45)):
+            for tab in range(5):
+                tui.switch_tab(self.state, tab, self.api)
+                f = frame(self.state, w, h)
+                self.assertEqual(len(f.lines), h)
+                self.assertTrue(all(cell_len(l.plain) == w for l in f.lines), (w, tab))
+                self.assertTrue(all(0 <= x0 < x1 <= w for r, x0, x1, a in f.hits), (w, tab))
+            tui.dispatch(self.state, "s", self.api)
+            self.assertEqual(len(frame(self.state, w, h).lines), h)
+            tui.dispatch(self.state, "esc", self.api)
+
+
+class ChartTabTest(unittest.TestCase):
+    def setUp(self):
+        self.api = FakeApi()
+        self.state = tui.State(TODAY)
+        tui.init(self.state, self.api)
+        tui.dispatch(self.state, "5", self.api)
+
+    def test_loads_history_and_fills_rows(self):
+        self.assertEqual(self.state.tab, 4)
+        self.assertEqual(self.api.made("history")[-1], {"days": 90, "ahead": 30})
+        for w, h in ((50, 20), (100, 30), (160, 45)):
+            f = frame(self.state, w, h)
+            plot = [r for r, x0, x1, a in f.hits if a == ("plot",)]
+            chips = {r for r, x0, x1, a in f.hits if a[0] == "chartset"}
+            self.assertEqual(len(plot) + len(chips), h - 4, (w, h))  # chips + chart use every body row
+            self.assertTrue(all(cell_len(l.plain) == w for l in f.lines))
+
+    @unittest.skipIf(tui.chart_mod is None, "chart.py not available")
+    def test_range_forecast_mode_chips(self):
+        click(self.state, ("chartset", "days", "30"), self.api, 100, 30)
+        self.assertEqual(self.api.made("history")[-1], {"days": 30, "ahead": 30})
+        click(self.state, ("chartset", "ahead", "90"), self.api, 100, 30)
+        self.assertEqual(self.api.made("history")[-1], {"days": 30, "ahead": 90})
+        n = len(self.api.made("history"))
+        click(self.state, ("chartset", "mode", "candle"), self.api, 100, 30)
+        self.assertEqual(len(self.api.made("history")), n)  # mode change needs no reload
+        hits = [a for *_, a in frame(self.state, 100, 30).hits]
+        self.assertIn(("chartset", "bucket", "month"), hits)
+        click(self.state, ("chartset", "bucket", "month"), self.api, 100, 30)
+        self.assertEqual(self.state.chart["bucket"], "month")
+        self.assertEqual(len(frame(self.state, 100, 30).lines), 30)
+
+    @unittest.skipIf(tui.chart_mod is None, "chart.py not available")
+    def test_plot_click_and_arrows_move_cursor(self):
+        f = frame(self.state, 100, 30)
+        row = next(r for r, x0, x1, a in f.hits if a == ("plot",))
+        x0, y0, x1, y1 = self.state.chart_obj.plot_box
+        col = (x0 + x1) // 2
+        tui.dispatch(self.state, ("mouse", 0, col + 1, row + 1), self.api)
+        expected = self.state.chart_obj.index_at(col)
+        self.assertIsNotNone(expected)
+        self.assertEqual(self.state.chart["cursor"], expected)
+        tui.dispatch(self.state, "right", self.api)
+        self.assertEqual(self.state.chart["cursor"], expected + 1)
+        tui.dispatch(self.state, "left", self.api)
+        tui.dispatch(self.state, "left", self.api)
+        self.assertEqual(self.state.chart["cursor"], expected - 1)
+        frame(self.state, 100, 30)  # tooltip renders
+        tui.dispatch(self.state, "esc", self.api)
+        self.assertIsNone(self.state.chart["cursor"])
+
+    def test_fallback_without_chart_module(self):
+        with mock.patch.object(tui, "chart_mod", None):
+            out = text(frame(self.state, 80, 24))
+        self.assertIn("thấp", out)
+
+    def test_overview_sparkline_opens_chart(self):
+        tui.dispatch(self.state, "1", self.api)
+        click(self.state, ("tab", 4), self.api, 170, 40)  # the tab itself
+        tui.dispatch(self.state, "1", self.api)
+        f = frame(self.state, 170, 40)
+        spark = [r for r, x0, x1, a in f.hits if a == ("tab", 4) and r > 1]
+        self.assertTrue(spark)  # the 30-day sparkline row links to Biểu đồ
+
+
+@unittest.skipIf(tui.anim is None or REAL_VFX["Ripple"] is None, "anim VFX not available")
+class VfxTest(unittest.TestCase):
+    def setUp(self):
+        for name, real in REAL_VFX.items():
+            patcher = mock.patch.object(tui.anim, name, real)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.api = FakeApi()
+        self.state = tui.State(TODAY)
+        self.state.now = 100.0
+        tui.init(self.state, self.api)
+        self.state.now = 110.0  # bar fill done
+        frame(self.state, 100, 30)
+
+    def test_ripple_and_press_lifecycle(self):
+        tui.sfx.play.reset_mock()
+        click(self.state, ("key", "s"), self.api, 100, 30)
+        self.assertEqual(len(self.state.ripples), 1)
+        self.assertIsNotNone(self.state.press)
+        tui.sfx.play.assert_any_call("click", enabled=True)
+        self.assertTrue(self.state.animating())
+        self.state.now = 110.1
+        frame(self.state, 100, 30)
+        self.assertTrue(self.state.animating())
+        self.state.now = 111.0
+        frame(self.state, 100, 30)
+        self.assertEqual(self.state.ripples, [])
+        self.assertFalse(self.state.animating())
+
+    def test_loop_blocks_again_after_vfx(self):
+        timeouts = []
+        times = iter([110.0, 110.0, 110.05, 110.05, 111.0, 111.0, 111.0, 111.0])
+        f = frame(self.state, 100, 30)
+        r, x0, x1, _ = next(h for h in f.hits if h[3] == ("key", "s"))
+        events = iter([("mouse", 0, x0 + 2, r + 1), "tick", "tick", "q"])
+
+        def next_event(timeout):
+            timeouts.append(timeout)
+            return next(events)
+
+        def draw():
+            self.state.hits = tui.build_frame(self.state, 100, 30).hits
+
+        tui.run_loop(self.state, next_event, draw, self.api, lambda: next(times))
+        self.assertEqual(timeouts[0], None)  # idle before the click
+        self.assertEqual(timeouts[1], tui.FRAME_S)  # ripple alive
+        self.assertEqual(timeouts[-1], None)  # everything finished: blocking read again
+
+    def test_tab_underline_slides(self):
+        f = frame(self.state, 100, 30)
+        spans = {a[1]: (x0, x1) for r, x0, x1, a in f.hits if r == 1 and a[0] == "tab"}
+        click(self.state, ("tab", 3), self.api, 100, 30)
+        self.assertEqual(self.state.slide[:2], (0, 3))
+
+        def underline_start():
+            line = frame(self.state, 100, 30).lines[1]
+            idx = tui._cell_index(line)
+            return next(col for col in range(100) if any(
+                "underline" in str(sp.style) and sp.start <= idx[col] < sp.end for sp in line.spans))
+        self.state.now = 110.05
+        mid = underline_start()
+        self.state.now = 112.0
+        self.assertEqual(underline_start(), spans[3][0])
+        self.assertTrue(spans[0][0] < mid < spans[3][0], (spans, mid))
+
+    def test_glow_on_new_selection(self):
+        tui.dispatch(self.state, "2", self.api)
+        tui.dispatch(self.state, "j", self.api)
+        self.assertIsNotNone(self.state.glow)
+        self.state.now = 110.1
+        frame(self.state, 100, 30)
+        self.assertTrue(self.state.animating())
+
+    def test_symbol_mode_safe_with_vfx_and_chart(self):
+        chars = set()
+        for tab in range(5):
+            tui.switch_tab(self.state, tab, self.api)
+            self.state.selected = 0 if tab in (1, 2, 3) else None
+            f = frame(self.state, 120, 30)
+            r, x0, x1, a = f.hits[0]
+            tui.dispatch(self.state, ("mouse", 0, x0 + 1, r + 1), self.api)
+            for dt in (0.05, 0.15, 0.3):
+                self.state.now += dt
+                chars |= set(text(frame(self.state, 120, 30)))
+        self.assertFalse(sorted(ch for ch in chars if ord(ch) >= 0x1F000 or cell_len(ch) > 1))
+
+
 class LoopTest(unittest.TestCase):
     def test_blocks_when_idle_and_ticks_while_animating(self):
         api = FakeApi()
@@ -1023,7 +1340,7 @@ class SoundTest(unittest.TestCase):
         tui.sfx.play.reset_mock()
 
     def events(self):
-        return [c.args[0] for c in tui.sfx.play.call_args_list]
+        return [c.args[0] for c in tui.sfx.play.call_args_list if c.args[0] != "click"]
 
     def test_events(self):
         click(self.state, ("tab", 2), self.api)
@@ -1057,8 +1374,9 @@ class SoundTest(unittest.TestCase):
         self.assertEqual(self.events(), ["error"])
 
     def test_toggle_persists_and_mutes(self):
+        tui.dispatch(self.state, "s", self.api)
         self.assertIn("♪ bật", text(frame(self.state)))
-        click(self.state, ("key", "m"), self.api)
+        click(self.state, ("set", "sound", "off"), self.api)
         self.assertEqual(self.api.made("sound")[-1], {"state": "off"})
         self.assertFalse(self.state.sound)
         self.assertIn("♪ tắt", text(frame(self.state)))

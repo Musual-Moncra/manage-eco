@@ -144,6 +144,11 @@ class Store:
         )
         self.conn.commit()
 
+    def delete_budget(self, category: str) -> bool:
+        cur = self.conn.execute("DELETE FROM budgets WHERE category = ?", (category,))
+        self.conn.commit()
+        return cur.rowcount > 0
+
     def list_budgets(self) -> List[Budget]:
         rows = self.conn.execute('SELECT category, "limit" FROM budgets ORDER BY category').fetchall()
         return [Budget(r["category"], r["limit"]) for r in rows]

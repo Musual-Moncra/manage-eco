@@ -242,6 +242,18 @@ python3 -m manage_eco --json --db eco.db --today 2026-11-06 budget status
 
 `pct` is a percentage float; it can exceed 100.
 
+### `budget delete CATEGORY`
+
+```bash
+python3 -m manage_eco --json --db eco.db --today 2026-11-06 budget delete food
+```
+
+```json
+{"ok": true, "command": "budget delete", "data": {"deleted": "food"}}
+```
+
+Removes the budget for that category. No budget → exit 1 `not_found`.
+
 ### `forecast [--days N]`
 
 ```bash
@@ -255,6 +267,21 @@ python3 -m manage_eco --json --db eco.db --today 2026-11-06 forecast --days 30
 `rows` are pending plans in `(today, today+days]`, chronological, with the
 running balance. `lowest` is the minimum running balance, or `null` when there
 are no rows.
+
+### `history [--days N] [--ahead N]`
+
+```bash
+python3 -m manage_eco --json --db eco.db --today 2026-11-06 history --days 3 --ahead 2
+```
+
+```json
+{"ok": true, "command": "history", "data": {"today": "2026-11-06", "series": [{"date": "2026-11-04", "balance": 1000000, "income": 1000000, "expense": 0}, {"date": "2026-11-05", "balance": 800000, "income": 0, "expense": 200000}, {"date": "2026-11-06", "balance": 700000, "income": 0, "expense": 100000}], "forecast": [{"date": "2026-11-07", "balance": 700000}, {"date": "2026-11-08", "balance": 400000}]}}
+```
+
+Daily balance series for charts. `series` ends today (`days` default 90; `0` =
+from the first transaction); `forecast` is one row per day after today (`ahead`
+default 90) and includes pending dòng tiền. Each `series` row has
+`{date,balance,income,expense}`; each `forecast` row has `{date,balance}`.
 
 ### `goal TARGET --by DATE`
 
@@ -356,7 +383,7 @@ print(execute("dash", {}, store, today))
 
 Params mirror the CLI arguments: `amount`, `category`, `note`, `date`, `id`,
 `month`, `all`, `name`, `due`, `every`, `day`, `income`, `target`, `by`, `days`,
-`state` (`sound`: `"on"`/`"off"`, omitted to read), `mode` (`icons`:
+`ahead`, `state` (`sound`: `"on"`/`"off"`, omitted to read), `mode` (`icons`:
 `"symbol"`/`"emoji"`/`"off"`, omitted to read).
 `store` is a `manage_eco.db.Store`; `today` is a `datetime.date`.
 

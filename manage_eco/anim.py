@@ -743,3 +743,106 @@ class PixelPopup:
             left = max(0, min(width - cur_w, left + shake))
 
         return (top, left, lines)
+
+
+class Ripple:
+    """Expanding aspect-corrected ring around a click point (2 cols per row)."""
+
+    UNICODE_RING = ("·", "∘", "○", "◌")
+    ASCII_RING = (".", "o", "O")
+
+    def __init__(
+        self,
+        row: int,
+        col: int,
+        *,
+        glyphs: str = "symbol",
+        duration: float = 0.35,
+    ) -> None:
+        self.row = int(row)
+        self.col = int(col)
+        self.glyphs = glyphs
+        self.duration = float(duration)
+
+    def done(self, t: float) -> bool:
+        """Return True when the ripple has finished."""
+        return float(t) >= self.duration
+
+    def cells(self, t: float) -> List[Tuple[int, int, str, str]]:
+        """Return list of (row, col, char, style) at elapsed time t."""
+        elapsed = float(t)
+        if elapsed < 0.0 or self.done(elapsed) or self.duration <= 0.0:
+            return []
+
+        mode = _resolve_glyphs(self.glyphs)
+        ring_chars = self.ASCII_RING if mode == "ascii" else self.UNICODE_RING
+        ratio = elapsed / self.duration
+        idx = min(len(ring_chars) - 1, int(ratio * len(ring_chars)))
+        ch = ring_chars[idx]
+        style = "dim #7dcfff" if ratio >= 0.5 else "bold #7dcfff"
+
+        r_rows = 3.0 * ease_out_cubic(ratio)
+        if r_rows < 0.35:
+            return [(self.row, self.col, ch, style)]
+
+        r_cols = 2.0 * r_rows
+        out: List[Tuple[int, int, str, str]] = []
+        seen = set()
+        for deg in range(0, 360, 30):
+            rad = math.radians(deg)
+            rr = int(round(self.row + math.sin(rad) * r_rows))
+            cc = int(round(self.col + math.cos(rad) * r_cols))
+            if (rr, cc) not in seen:
+                seen.add((rr, cc))
+                out.append((rr, cc, ch, style))
+        return out
+
+
+class Press:
+    """Short button/chip flash indicator on click."""
+
+    def __init__(self, duration: float = 0.12) -> None:
+        self.duration = float(duration)
+
+    def done(self, t: float) -> bool:
+        return float(t) >= self.duration
+
+    def active(self, t: float) -> bool:
+        """Return True while the press flash is active."""
+        elapsed = float(t)
+        return 0.0 <= elapsed < self.duration
+
+
+def slide(x_from: int, x_to: int, t: float, duration: float = 0.18) -> int:
+    """Eased horizontal underline / indicator position."""
+    if duration <= 0.0 or t >= duration:
+        return int(x_to)
+    if t <= 0.0:
+        return int(x_from)
+    return int(round(x_from + (x_to - x_from) * ease_out_cubic(t / duration)))
+
+
+class Glow:
+    """Sweeping highlight across a newly selected row."""
+
+    def __init__(self, width: int, duration: float = 0.4) -> None:
+        self.width = int(width)
+        self.duration = float(duration)
+
+    def done(self, t: float) -> bool:
+        return float(t) >= self.duration
+
+    def style_at(self, col: int, t: float) -> str:
+        """Return the highlight style at column col and elapsed time t, or '' if outside."""
+        elapsed = float(t)
+        if elapsed < 0.0 or self.done(elapsed) or self.width <= 0 or self.duration <= 0.0:
+            return ""
+        center = ease_out_cubic(elapsed / self.duration) * self.width
+        band = max(3.0, self.width * 0.18)
+        dist = abs(float(col) - center)
+        if dist <= band * 0.4:
+            return "bold #ffffff on #4c4570"
+        if dist <= band:
+            return "on #3b3363"
+        return ""
+

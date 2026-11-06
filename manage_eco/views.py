@@ -179,6 +179,14 @@ def render(cmd: str, d: dict):
                                 % (p["id"], p["name"], money(p["amount"]), p["due_date"]))
     if cmd == "icons":
         return Text("Kiểu icon: %s" % d["icons"])
+    if cmd == "budget delete":
+        return Text.from_markup("✓ Đã xoá ngân sách %s" % d["deleted"])
+    if cmd == "history":
+        s = d["series"]
+        lo = min(r["balance"] for r in s) if s else 0
+        hi = max(r["balance"] for r in s) if s else 0
+        return Text.from_markup("%d ngày · thấp %s · cao %s · dự báo %d ngày"
+                                % (len(s), money(lo), money(hi), len(d["forecast"])))
     if cmd == "sound":
         return Text.from_markup("Âm thanh: %s" % ("[%s]🔊 bật[/]" % INC if d["sound"] else "[dim]🔇 tắt[/]"))
     if cmd == "categories":
