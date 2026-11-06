@@ -58,3 +58,12 @@ Commands → data:
 
 ### RAM budget
 `eco --json dash` max RSS < 25 MB; `eco ui` < 45 MB (measure: `/usr/bin/time -l`). No new dependencies.
+
+## v4: "Dòng tiền", arithmetic amounts, more recurrence (user request)
+- UI wording: "Dự định" → **"Dòng tiền"** everywhere user-facing. Internal names (`plan` command, `Plan`, JSON) unchanged.
+- Recurrence: `once | daily | weekly | monthly` (`models.DAILY` added). Plan has `day: Optional[int]` (MONTHLY fixed day 1..31, clamped to month end, never drifts: Jan 31 → Feb 28 → Mar 31). `Plan.anchor_day` = `day or due_date.day`. plan JSON object gains `"day"`.
+- `plan add ... --every monthly --day N` → `--due` optional (defaults to next date ≥ today on day N). `--day` with non-monthly → invalid.
+- `fmt.parse_money` accepts arithmetic (owner antigravity-1): operators `+ - x X × * : / ÷`, parentheses, spaces, unary minus; each number may carry its own unit/format (`50k+1.5tr`, `3x150k`, `1tr:4`, `(2tr-500k)*2`, `1.250.000+200k`). No `eval`. Result rounded to nearest đồng; ValueError on ≤0, divide by zero, bad syntax. Plain inputs behave exactly as before. Also `money_preview(s) -> Optional[str]` → `"= 70.000 ₫"` when s contains an operator and parses, else None (for live preview in forms).
+- **Easier dates** (user request). `fmt.parse_date(s, today)` additionally accepts (case/diacritics-insensitive, e.g. "hom qua" = "hôm qua"):
+  `hôm qua`/`qua`, `mai`/`ngày mai`, `mốt`/`ngày kia` (+2), `-N`/`+N` (days), `N` alone (1..31 → day N of this month, clamped), `D/M` or `D-M` (this year), `D/M/YY` (20YY), `thứ 2`..`thứ 7`/`t2`..`t7`, `chủ nhật`/`cn` (next such weekday, today excluded), `tuần sau` (+7), `tháng sau` (same day next month, clamped), `đầu tháng sau` (1st next month), `cuối tháng` (last day of this month). Existing formats unchanged. Also `date_preview(s, today) -> Optional[str]` → `"→ Thứ 6, 13/11/2026"` when parseable and not ISO, else None.
+- TUI date fields (owner claude-2): chips `[Hôm qua][Hôm nay][Mai][Cuối tháng][Đầu tháng sau]` plus a clickable mini month calendar (‹ › to change month; today and the selected day highlighted), live `date_preview` after the field.

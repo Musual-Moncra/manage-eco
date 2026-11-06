@@ -23,7 +23,8 @@ CREATE TABLE IF NOT EXISTS plans (
     due_date TEXT NOT NULL,
     category TEXT NOT NULL,
     recurrence TEXT NOT NULL DEFAULT 'once',
-    status TEXT NOT NULL DEFAULT 'pending'
+    status TEXT NOT NULL DEFAULT 'pending',
+    day INTEGER CHECK (day IS NULL OR day BETWEEN 1 AND 31)
 );
 CREATE TABLE IF NOT EXISTS budgets (
     category TEXT PRIMARY KEY,
@@ -41,6 +42,10 @@ class Store:
         self.conn = sqlite3.connect(path or default_path())
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
+        cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(plans)")}
+        if "day" not in cols:  # migrate databases created before v4
+            self.conn.execute("ALTER TABLE plans ADD COLUMN day INTEGER")
+            self.conn.commit()
 
     def close(self) -> None:
         self.conn.close()
@@ -81,9 +86,9 @@ class Store:
     # --- plans ---
     def add_plan(self, p: Plan) -> int:
         cur = self.conn.execute(
-            "INSERT INTO plans (name, amount, kind, due_date, category, recurrence, status)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (p.name, p.amount, p.kind, p.due_date.isoformat(), p.category, p.recurrence, p.status),
+            "INSERT INTO plans (name, amount, kind, due_date, category, recurrence, status, day)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (p.name, p.amount, p.kind, p.due_date.isoformat(), p.category, p.recurrence, p.status, p.day),
         )
         self.conn.commit()
         p.id = cur.lastrowid
@@ -98,7 +103,7 @@ class Store:
         rows = self.conn.execute(sql + " ORDER BY due_date, id", args).fetchall()
         return [
             Plan(r["name"], r["amount"], r["kind"], date.fromisoformat(r["due_date"]), r["category"],
-                 r["recurrence"], r["status"], r["id"])
+                 r["recurrence"], r["status"], r["id"], r["day"])
             for r in rows
         ]
 
@@ -107,8 +112,9 @@ class Store:
 
     def update_plan(self, p: Plan) -> None:
         self.conn.execute(
-            "UPDATE plans SET name=?, amount=?, kind=?, due_date=?, category=?, recurrence=?, status=? WHERE id=?",
-            (p.name, p.amount, p.kind, p.due_date.isoformat(), p.category, p.recurrence, p.status, p.id),
+            "UPDATE plans SET name=?, amount=?, kind=?, due_date=?, category=?, recurrence=?, status=?, day=?"
+            " WHERE id=?",
+            (p.name, p.amount, p.kind, p.due_date.isoformat(), p.category, p.recurrence, p.status, p.day, p.id),
         )
         self.conn.commit()
 

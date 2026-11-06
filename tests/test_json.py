@@ -14,7 +14,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TODAY = "2026-11-06"
 
 TX_KEYS = {"id", "date", "amount", "kind", "category", "note", "signed"}
-PLAN_KEYS = {"id", "name", "amount", "kind", "due_date", "category", "recurrence", "status"}
+PLAN_KEYS = {"id", "name", "amount", "kind", "due_date", "category", "recurrence", "status", "day"}
 BUDGET_KEYS = {"category", "limit"}
 BUDGET_ROW_KEYS = {"category", "limit", "spent", "remaining", "pct"}
 SUMMARY_KEYS = {"month", "income", "expense", "net", "by_category"}
@@ -216,12 +216,49 @@ class JsonCliTest(unittest.TestCase):
         self.assertEqual(plan["category"], "housing")
         self.assertEqual(plan["recurrence"], "monthly")
         self.assertEqual(plan["status"], "pending")
+        self.assertIsNone(plan["day"])
 
         p = self.ok("plan", "add", "Bonus", "5000000", "job",
                     "--due", "2026-12-15", "--income")
         plan = p["data"]["plan"]
         self.assertEqual(plan["kind"], "income")
         self.assertEqual(plan["recurrence"], "once")
+        self.assertIsNone(plan["day"])
+
+    def test_plan_add_daily(self):
+        p = self.ok("plan", "add", "Coffee", "20000", "food",
+                    "--due", "2026-11-10", "--every", "daily")
+        self.assert_command(p, "plan add")
+        plan = p["data"]["plan"]
+        self.assert_plan(plan)
+        self.assertEqual(plan["recurrence"], "daily")
+        self.assertEqual(plan["due_date"], "2026-11-10")
+        self.assertIsNone(plan["day"])
+
+        p = self.ok("plan", "done", str(plan["id"]))
+        self.assertEqual(p["data"]["plan"]["due_date"], "2026-11-11")
+        self.assertEqual(p["data"]["plan"]["status"], "pending")
+
+    def test_plan_add_monthly_day_without_due(self):
+        p = self.ok("plan", "add", "Rent", "25000000", "housing",
+                    "--every", "monthly", "--day", "20")
+        plan = p["data"]["plan"]
+        self.assert_plan(plan)
+        self.assertEqual(plan["recurrence"], "monthly")
+        self.assertEqual(plan["day"], 20)
+        self.assertEqual(plan["due_date"], "2026-11-20")
+
+        p = self.ok("plan", "add", "Pay", "1000000", "bills",
+                    "--every", "monthly", "--day", "5")
+        self.assertEqual(p["data"]["plan"]["due_date"], "2026-12-05")
+
+    def test_plan_add_day_requires_monthly(self):
+        self.err("invalid", 2, "plan", "add", "X", "1000", "cat",
+                 "--every", "weekly", "--day", "5")
+        self.err("invalid", 2, "plan", "add", "X", "1000", "cat",
+                 "--every", "daily", "--day", "5")
+        self.err("invalid", 2, "plan", "add", "X", "1000", "cat",
+                 "--every", "monthly", "--day", "32")
 
     def test_plan_add_invalid(self):
         self.err("invalid", 2, "plan", "add", "X", "abc", "cat", "--due", "2026-12-01")
@@ -270,6 +307,10 @@ class JsonCliTest(unittest.TestCase):
         plan = p["data"]["plan"]
         self.assertEqual(plan["status"], "pending")
         self.assertEqual(plan["due_date"], "2027-02-28")
+        self.assertEqual(plan["day"], 31)
+
+        p = self.ok("plan", "done", str(pid), "-d", "2027-02-28")
+        self.assertEqual(p["data"]["plan"]["due_date"], "2027-03-31")
 
     def test_plan_cancel(self):
         p = self.ok("plan", "add", "Trip", "5000000", "travel", "--due", "2026-12-01")

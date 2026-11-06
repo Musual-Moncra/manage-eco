@@ -6,10 +6,10 @@
 
 ### Tính năng nổi bật
 
-- **Nhập liệu tự nhiên chuẩn Việt Nam**: hỗ trợ `200k`, `1.5tr`, `1.5m`, `1.250.000`, ngày `hom nay`, `06/11/2026`, `+7`.
-- **Quản lý dự định & định kỳ**: theo dõi các khoản thu/chi một lần (`once`), hàng tuần (`weekly`), hàng tháng (`monthly`) và tự động chuyển kỳ khi hoàn tất.
+- **Nhập liệu tự nhiên chuẩn Việt Nam**: `200k`, `1.5tr`, `1.250.000`, biểu thức `50k+20k`; ngày `hom nay`, `mai`, `15/11`, `thứ 6`, `cuối tháng`, `+7`.
+- **Quản lý Dòng tiền & định kỳ**: theo dõi các khoản thu/chi một lần (`once`), hàng ngày (`daily`), hàng tuần (`weekly`), hàng tháng (`monthly`) và tự động chuyển kỳ khi hoàn tất.
 - **Dự báo dòng tiền & cảnh báo âm quỹ**: mô phỏng số dư 30–90 ngày tới, chỉ rõ ngày chạm đáy hoặc âm tiền.
-- **Giao diện TUI tương tác (`eco ui`)**: điều khiển hoàn toàn bằng phím tắt, chuyển tab tức thì.
+- **Giao diện TUI tương tác (`eco ui`)**: bấm chuột hoặc phím tắt, chuyển tab tức thì, chọn ngày bằng chip/lịch tháng và xem trước ngay khi nhập.
 - **Chế độ AI Agent (`--json` / `ECO_JSON=1`)**: đầu ra JSON một dòng chuẩn hóa, không nạp `rich`, tích hợp trực tiếp cho LLM/automation.
 - **Siêu nhẹ & tiết kiệm RAM**: chỉ dùng thư viện chuẩn Python + `rich` (lazy import), tiêu thụ `< 25 MB` ở chế độ JSON và `< 45 MB` ở chế độ TUI.
 
@@ -47,12 +47,12 @@ Các cờ toàn cục có thể đặt trước bất kỳ lệnh con nào của
 
 Gõ `eco` (hoặc `eco ui`) để mở. **Mọi thao tác đều bấm chuột được** — không cần nhớ phím:
 
-- **4 tab** ở dòng trên cùng: Tổng quan · Giao dịch · Dự định · Ngân sách — nhấp để chuyển.
-- **Nút hành động** ở dòng dưới cùng: `+ Chi` `+ Thu` `+ Dự định`, khi chọn một dòng có thêm `✓ Xong` / `✕ Xoá`, và `Thoát`.
-- **Form thêm**: nhấp số tiền gợi ý (`50k` … `1tr`) và danh mục hay dùng, rồi nhấp `Lưu`.
+- **4 tab** ở dòng trên cùng: Tổng quan · Giao dịch · Dòng tiền · Ngân sách — nhấp để chuyển.
+- **Nút hành động** ở dòng dưới cùng: `+ Chi` `+ Thu` `+ Dòng tiền`, khi chọn một dòng có thêm `✓ Xong` / `✕ Xoá`, và `Thoát`.
+- **Form thêm**: nhấp số tiền gợi ý (`50k` … `1tr`) và danh mục hay dùng; ô ngày có chip nhanh `[Hôm qua][Hôm nay][Mai][Cuối tháng][Đầu tháng sau]`, lịch tháng bấm được (‹ › đổi tháng) và dòng xem trước `→ Thứ 6, 13/11/2026`; số tiền cũng hiện xem trước (`= 70.000 ₫`). Nhấp `Lưu`.
 - Nhấp vào một dòng để chọn, lăn chuột để cuộn.
 
-Phím tắt (luôn ghi sẵn trên từng nút): `1`–`4` tab · `a` thêm chi · `i` thêm thu · `p` thêm dự định · `d` xong · `x` xoá · `↑↓` chọn · `Enter` lưu · `Esc` huỷ · `q` thoát.
+Phím tắt (luôn ghi sẵn trên từng nút): `1`–`4` tab · `a` thêm chi · `i` thêm thu · `p` thêm dòng tiền · `d` xong · `x` xoá · `↑↓` chọn · `Enter` lưu · `Esc` huỷ · `q` thoát.
 
 ---
 
@@ -60,8 +60,37 @@ Phím tắt (luôn ghi sẵn trên từng nút): `1`–`4` tab · `a` thêm chi 
 
 ### Định dạng tiền tệ & ngày tháng hỗ trợ
 
-- **Số tiền**: `1250000`, `1.250.000`, `1,250,000`, `200k` (200.000 ₫), `1.5tr` hoặc `1.5m` (1.500.000 ₫).
-- **Ngày tháng**: ISO `2026-11-06`, `06/11/2026`, `today` / `hom nay`, hoặc `+7` (7 ngày kể từ hôm nay).
+- **Số tiền**: `1250000`, `1.250.000`, `1,250,000`, `200k` (200.000 ₫), `1.5tr`/`1.5m` (1.500.000 ₫), hoặc biểu thức:
+
+  | Nhập | Kết quả |
+  | :--- | ---: |
+  | `50k+20k` | 70.000 ₫ |
+  | `3x150k` | 450.000 ₫ |
+  | `1tr:4` | 250.000 ₫ |
+  | `(2tr-500k)*2` | 3.000.000 ₫ |
+
+  Toán tử `+ - x X × * : / ÷`, ngoặc, dấu cách và dấu trừ đơn; không dùng `eval`.
+
+- **Ngày tháng** (không phân biệt hoa/thường, có/không dấu):
+
+  | Nhập | Ý nghĩa |
+  | :--- | :--- |
+  | `2026-11-06` | ngày ISO |
+  | `06/11/2026` | ngày/tháng/năm |
+  | `today` / `hom nay` | hôm nay |
+  | `hôm qua` / `qua` | hôm qua |
+  | `mai` / `ngày mai` | ngày mai |
+  | `mốt` / `ngày kia` | +2 ngày |
+  | `-3` / `+7` | lùi/tiến N ngày |
+  | `15` | ngày 15 tháng này (kẹp cuối tháng) |
+  | `15/11` hoặc `15-11` | 15/11 năm nay |
+  | `15/11/26` | 15/11/2026 |
+  | `thứ 6` / `t6` | thứ 6 tới (không tính hôm nay) |
+  | `chủ nhật` / `cn` | chủ nhật tới |
+  | `tuần sau` | +7 ngày |
+  | `tháng sau` | cùng ngày tháng sau (kẹp cuối tháng) |
+  | `đầu tháng sau` | ngày 1 tháng sau |
+  | `cuối tháng` | ngày cuối tháng này |
 
 ### 1. Ghi nhận khoản thu / khoản chi (`eco income` | `eco expense`)
 
@@ -89,25 +118,31 @@ eco summary
 eco summary --month 2026-11
 ```
 
-### 4. Quản lý kế hoạch thu/chi tương lai (`eco plan`)
+### 4. Quản lý Dòng tiền (`eco plan`)
 
 ```bash
-# Thêm dự định chi tiêu định kỳ hàng tháng
+# Thêm dòng tiền chi định kỳ hàng tháng vào một ngày cố định (không cần --due)
+eco plan add "Tiền nhà" 6tr nha --every monthly --day 5
+
+# Hàng ngày, hoặc có ngày đến hạn cụ thể
+eco plan add "Cà phê" 20k "an uong" --due +1 --every daily
 eco plan add "Tiền nhà" 6tr nha --due 2026-12-01 --every monthly
 
-# Thêm dự định thu nhập (--income)
+# Thêm dòng tiền thu nhập (--income)
 eco plan add "Thưởng dự án" 10tr thuong --due +30 --income
 
-# Xem danh sách dự định đang chờ (pending) hoặc tất cả (--all)
+# Xem danh sách dòng tiền đang chờ (pending) hoặc tất cả (--all)
 eco plan list
 eco plan list --all
 
-# Đánh dấu dự định đã thực hiện (ghi giao dịch & tự động nhảy kỳ nếu lặp lại)
+# Đánh dấu đã thực hiện (ghi giao dịch & tự động nhảy kỳ nếu lặp lại)
 eco plan done 1 -d today
 
-# Huỷ dự định
+# Huỷ dòng tiền
 eco plan cancel 2
 ```
+
+`--day N` chỉ dùng với `--every monthly` (N = 1..31, kẹp cuối tháng, không trôi: 31 → 28/30 → 31); dùng với `daily`/`weekly` sẽ báo lỗi.
 
 ### 5. Ngân sách theo danh mục (`eco budget`)
 

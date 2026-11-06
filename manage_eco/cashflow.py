@@ -4,7 +4,7 @@ from collections import defaultdict
 from datetime import date, timedelta
 from typing import Dict, List, Optional, Tuple
 
-from manage_eco.models import EXPENSE, INCOME, MONTHLY, ONCE, PENDING, WEEKLY, Plan
+from manage_eco.models import DAILY, EXPENSE, INCOME, MONTHLY, ONCE, PENDING, WEEKLY, Plan
 
 
 def month_range(year: int, month: int) -> Tuple[date, date]:
@@ -46,7 +46,14 @@ def expand_plan(plan: Plan, start: date, end: date) -> List[date]:
     if plan.recurrence == ONCE:
         return [due] if start <= due <= end else []
     out = []  # type: List[date]
-    if plan.recurrence == WEEKLY:
+    if plan.recurrence == DAILY:
+        d = due
+        if d < start:
+            d += timedelta(days=(start - d).days)
+        while d <= end:
+            out.append(d)
+            d += timedelta(days=1)
+    elif plan.recurrence == WEEKLY:
         d = due
         if d < start:
             d += timedelta(days=-(-(start - d).days // 7) * 7)
@@ -54,15 +61,16 @@ def expand_plan(plan: Plan, start: date, end: date) -> List[date]:
             out.append(d)
             d += timedelta(days=7)
     elif plan.recurrence == MONTHLY:
+        anchor = plan.anchor_day
         n = 0
         if due < start:
             n = max(0, (start.year - due.year) * 12 + start.month - due.month - 1)
-        d = _add_months(due, n, due.day)
+        d = _add_months(due, n, anchor)
         while d <= end:
             if d >= start:
                 out.append(d)
             n += 1
-            d = _add_months(due, n, due.day)
+            d = _add_months(due, n, anchor)
     return out
 
 

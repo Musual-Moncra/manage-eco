@@ -12,7 +12,11 @@ from typing import Any, Callable, Dict, Optional
 
 from manage_eco import cashflow, plans
 from manage_eco.fmt import parse_date, parse_money
-from manage_eco.models import EXPENSE, INCOME, ONCE, PENDING, Budget, Plan, Transaction
+from manage_eco.models import (
+    DAILY, EXPENSE, INCOME, MONTHLY, ONCE, PENDING, WEEKLY, Budget, Plan, Transaction,
+)
+
+RECURRENCES = (ONCE, DAILY, WEEKLY, MONTHLY)
 
 
 def tx_dict(t: Transaction) -> dict:
@@ -22,7 +26,7 @@ def tx_dict(t: Transaction) -> dict:
 
 def plan_dict(p: Plan) -> dict:
     return {"id": p.id, "name": p.name, "amount": p.amount, "kind": p.kind, "due_date": p.due_date.isoformat(),
-            "category": p.category, "recurrence": p.recurrence, "status": p.status}
+            "category": p.category, "recurrence": p.recurrence, "status": p.status, "day": p.day}
 
 
 def _amount(v: Any) -> int:
@@ -100,13 +104,33 @@ def summary(params, store, today):
     return s
 
 
+def _next_day_of_month(day: int, today: date) -> date:
+    """First date >= today falling on `day` of its month (clamped to month end)."""
+    y, m = today.year, today.month
+    while True:
+        d = date(y, m, min(day, cashflow.month_range(y, m)[1].day))
+        if d >= today:
+            return d
+        y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+
+
 def plan_add(params, store, today):
-    _require(params, "name", "amount", "category", "due")
     every = params.get("every") or ONCE
-    if every not in ("once", "weekly", "monthly"):
-        raise ValueError("--every phải là once|weekly|monthly")
+    if every not in RECURRENCES:
+        raise ValueError("--every phải là %s" % "|".join(RECURRENCES))
+    day = params.get("day")
+    if day not in (None, ""):
+        day = int(day)
+        if every != MONTHLY:
+            raise ValueError("--day chỉ dùng với --every monthly")
+        if not 1 <= day <= 31:
+            raise ValueError("--day phải từ 1 đến 31")
+    else:
+        day = None
+    _require(params, "name", "amount", "category", *(() if day else ("due",)))
+    due = _date(params["due"], today) if params.get("due") else _next_day_of_month(day, today)
     p = Plan(str(params["name"]), _amount(params["amount"]), INCOME if params.get("income") else EXPENSE,
-             _date(params["due"], today), str(params["category"]), every)
+             due, str(params["category"]), every, day=day)
     store.add_plan(p)
     return {"plan": plan_dict(p)}
 
@@ -118,7 +142,7 @@ def plan_list(params, store, today):
 def _plan_or_raise(store, pid: int) -> Plan:
     p = store.get_plan(pid)
     if p is None:
-        raise LookupError("không tìm thấy dự định #%d" % pid)
+        raise LookupError("không tìm thấy dòng tiền #%d" % pid)
     return p
 
 

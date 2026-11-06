@@ -4,7 +4,7 @@ from datetime import date
 from manage_eco import cashflow
 from manage_eco.db import Store
 from manage_eco.models import (
-    CANCELLED, EXPENSE, INCOME, MONTHLY, ONCE, WEEKLY, Plan, Transaction,
+    CANCELLED, DAILY, EXPENSE, INCOME, MONTHLY, ONCE, WEEKLY, Plan, Transaction,
 )
 
 
@@ -51,6 +51,24 @@ class CashflowTest(unittest.TestCase):
                          [date(2026, 11, 16), date(2026, 11, 23), date(2026, 11, 30)])
         self.assertEqual(cashflow.expand_plan(p, date(2026, 10, 1), date(2026, 11, 9)),
                          [date(2026, 11, 2), date(2026, 11, 9)])
+
+    def test_expand_daily(self):
+        p = Plan("cafe", 20_000, EXPENSE, date(2026, 11, 2), "an", DAILY)
+        self.assertEqual(cashflow.expand_plan(p, date(2026, 11, 1), date(2026, 11, 5)),
+                         [date(2026, 11, 2), date(2026, 11, 3), date(2026, 11, 4), date(2026, 11, 5)])
+        self.assertEqual(cashflow.expand_plan(p, date(2026, 11, 10), date(2026, 11, 12)),
+                         [date(2026, 11, 10), date(2026, 11, 11), date(2026, 11, 12)])
+        self.assertEqual(cashflow.expand_plan(p, date(2026, 10, 1), date(2026, 11, 1)), [])
+
+    def test_expand_monthly_anchor_day(self):
+        p = Plan("thue nha", 5_000_000, EXPENSE, date(2026, 2, 28), "nha", MONTHLY, day=31)
+        self.assertEqual(cashflow.expand_plan(p, date(2026, 2, 1), date(2026, 5, 31)),
+                         [date(2026, 2, 28), date(2026, 3, 31), date(2026, 4, 30),
+                          date(2026, 5, 31)])
+        q = Plan("bao hiem", 1_000_000, EXPENSE, date(2026, 1, 15), "bao", MONTHLY, day=31)
+        self.assertEqual(cashflow.expand_plan(q, date(2026, 1, 1), date(2026, 4, 30)),
+                         [date(2026, 1, 31), date(2026, 2, 28), date(2026, 3, 31),
+                          date(2026, 4, 30)])
 
     def test_expand_monthly_clamps(self):
         p = Plan("thue nha", 5_000_000, EXPENSE, date(2026, 1, 31), "nha", MONTHLY)

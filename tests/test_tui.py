@@ -1,9 +1,10 @@
 import unittest
 from datetime import date
+from unittest import mock
 
 from rich.cells import cell_len
 
-from manage_eco import api, tui
+from manage_eco import api, fmt, tui
 from manage_eco.db import Store
 
 TODAY = date(2026, 11, 6)
@@ -20,7 +21,7 @@ TXS = [{"id": i, "date": "2026-11-%02d" % i, "amount": 1000 * i, "kind": "expens
 PLANS = [{"id": 7, "name": "laptop", "amount": 100, "kind": "expense", "due_date": "2026-12-01",
           "category": "do", "recurrence": "once", "status": "pending"},
          {"id": 8, "name": "lương", "amount": 50, "kind": "income", "due_date": "2026-12-05",
-          "category": "luong", "recurrence": "monthly", "status": "pending"}]
+          "category": "luong", "recurrence": "monthly", "status": "pending", "day": 5}]
 
 
 class FakeApi:
@@ -70,6 +71,15 @@ class FrameTest(unittest.TestCase):
                 f = frame(self.state, w, h)
                 self.assertEqual(len(f.lines), h)
                 self.assertTrue(all(cell_len(t.plain) == w for t in f.lines), (w, tab))
+
+    def test_wording_dong_tien(self):
+        for tab in range(4):
+            tui.switch_tab(self.state, tab, self.api)
+            out = text(frame(self.state))
+            self.assertNotIn("Dự định", out)
+            self.assertIn("Dòng tiền", out)
+        tui.dispatch(self.state, "p", self.api)
+        self.assertIn("Thêm dòng tiền", text(frame(self.state)))
 
     def test_layout_rows(self):
         out = text(frame(self.state)).splitlines()
@@ -133,7 +143,9 @@ class ClickTest(unittest.TestCase):
         self.assertNotIn(("key", "d"), [a for *_, a in frame(self.state).hits])
         click(self.state, ("select", 1), self.api)
         self.assertEqual(self.state.selected, 1)
-        self.assertIn("✓ Xong", text(frame(self.state)))
+        out = text(frame(self.state))
+        self.assertIn("✓ Xong", out)
+        self.assertIn("hàng tháng · ngày 5", out)
         click(self.state, ("key", "d"), self.api)
         self.assertEqual(self.api.made("plan done"), [{"id": 8, "date": "2026-11-06"}])
         self.assertIn("lương", self.state.status[0])
@@ -141,9 +153,9 @@ class ClickTest(unittest.TestCase):
     def test_add_expense_by_clicks(self):
         click(self.state, ("key", "a"), self.api, 140, 40)
         self.assertIsNotNone(self.state.form)
-        click(self.state, ("chip", 0, "200k"), self.api, 140, 40)
-        click(self.state, ("chip", 1, "đi lại"), self.api, 140, 40)
-        click(self.state, ("focus", 2), self.api, 140, 40)
+        click(self.state, ("chip", "amount", "200k"), self.api, 140, 40)
+        click(self.state, ("chip", "category", "đi lại"), self.api, 140, 40)
+        click(self.state, ("focus", "note"), self.api, 140, 40)
         for ch in "xe buýt":
             tui.dispatch(self.state, ch, self.api)
         self.assertIn("Lưu", text(frame(self.state, 140, 40)))
@@ -162,26 +174,140 @@ class ClickTest(unittest.TestCase):
         self.assertIn("Số tiền không hợp lệ", out)
         self.assertIn("Chọn hoặc gõ một danh mục", out)
         self.assertEqual(self.api.made("income"), [])
-        self.assertEqual(self.state.form.focus, 0)
+        self.assertEqual(self.state.form.focus, "amount")
         self.assertIn("lương", out)  # income categories offered
 
-    def test_plan_form_chips_and_keys(self):
+    def fill_plan(self, name="lương", amount="10tr", category="luong"):
         tui.dispatch(self.state, "p", self.api)
-        for value in ("lương", "10tr", "luong", "+10"):
+        for value in (name, amount, category):
             for ch in value:
                 tui.dispatch(self.state, ch, self.api)
             tui.dispatch(self.state, "tab", self.api)
-        click(self.state, ("chip", 4, "monthly"), self.api)
+
+    def test_plan_form_keys(self):
+        self.fill_plan()
+        self.assertEqual(self.state.form.focus, "every")
+        for _ in range(3):
+            tui.dispatch(self.state, "right", self.api)  # 1 lần → hàng ngày → hàng tuần → hàng tháng
+        tui.dispatch(self.state, "tab", self.api)
+        self.assertEqual(self.state.form.focus, "day")
+        tui.dispatch(self.state, "tab", self.api)
+        for ch in "+10":
+            tui.dispatch(self.state, ch, self.api)
         tui.dispatch(self.state, "tab", self.api)
         tui.dispatch(self.state, "right", self.api)  # Loại: Chi → Thu
         tui.dispatch(self.state, "enter", self.api)
         self.assertEqual(self.api.made("plan add"), [{"name": "lương", "amount": 10_000_000, "category": "luong",
                                                       "due": "2026-11-16", "every": "monthly", "income": True}])
 
+    def test_daily_chip(self):
+        self.fill_plan("cà phê", "30k", "ăn uống")
+        click(self.state, ("chip", "every", "daily"), self.api)
+        self.assertNotIn(("chip", "day", "5"), [a for *_, a in frame(self.state).hits])
+        tui.dispatch(self.state, "enter", self.api)
+        self.assertEqual(self.api.made("plan add"), [{"name": "cà phê", "amount": 30_000, "category": "ăn uống",
+                                                      "due": "2026-11-07", "every": "daily", "income": False}])
+
+    def test_monthly_day_chip_omits_due(self):
+        self.fill_plan("thuê nhà", "3tr", "nhà")
+        click(self.state, ("chip", "every", "monthly"), self.api)
+        out = text(frame(self.state))
+        self.assertIn("Ngày trả hằng tháng", out)
+        self.assertIn("Cuối tháng", out)
+        click(self.state, ("chip", "day", "5"), self.api)
+        self.assertIn("tự tính lần tới ngày 5", text(frame(self.state)))
+        tui.dispatch(self.state, "enter", self.api)
+        self.assertEqual(self.api.made("plan add"), [{"name": "thuê nhà", "amount": 3_000_000, "category": "nhà",
+                                                      "day": 5, "every": "monthly", "income": False}])
+
+    def test_month_end_chip_and_day_hidden_when_not_monthly(self):
+        self.fill_plan("lương", "10tr", "luong")
+        click(self.state, ("chip", "every", "monthly"), self.api)
+        click(self.state, ("chip", "day", "31"), self.api)
+        self.assertEqual(self.state.form.values["day"], "31")
+        click(self.state, ("chip", "every", "weekly"), self.api)
+        self.assertNotIn("Ngày trả hằng tháng", text(frame(self.state)))
+        tui.dispatch(self.state, "enter", self.api)
+        params = self.api.made("plan add")[0]
+        self.assertNotIn("day", params)
+        self.assertEqual((params["every"], params["due"]), ("weekly", "2026-11-07"))
+
+    def test_bad_typed_day(self):
+        self.fill_plan()
+        click(self.state, ("chip", "every", "monthly"), self.api)
+        click(self.state, ("focus", "day"), self.api)
+        for ch in "40":
+            tui.dispatch(self.state, ch, self.api)
+        tui.dispatch(self.state, "enter", self.api)
+        self.assertEqual(self.api.made("plan add"), [])
+        self.assertEqual(self.state.form.focus, "day")
+        self.assertIn("Ngày trả phải là số từ 1 đến 31", text(frame(self.state)))
+
+    def test_amount_preview(self):
+        tui.dispatch(self.state, "a", self.api)
+        for ch in "50k+20k":
+            tui.dispatch(self.state, ch, self.api)
+        fake = lambda v: "= 70.000 ₫" if "+" in v else None
+        with mock.patch.object(fmt, "money_preview", fake, create=True):
+            line = next(l.plain for l in frame(self.state).lines if "Số tiền" in l.plain)
+        self.assertRegex(line, r"50k\+20k▏\s+= 70\.000 ₫")
+        self.assertIn("phép tính + - x :", text(frame(self.state)))
+
+    @unittest.skipUnless(hasattr(fmt, "money_preview"), "fmt.money_preview not landed yet")
+    def test_amount_preview_real(self):
+        tui.dispatch(self.state, "a", self.api)
+        for ch in "50k+20k":
+            tui.dispatch(self.state, ch, self.api)
+        self.assertIn("70.000 ₫", text(frame(self.state)))
+
+    def test_date_chips_and_calendar(self):
+        tui.dispatch(self.state, "a", self.api)
+        hits = [a for *_, a in frame(self.state).hits]
+        self.assertIn(("chip", "date", "05/11/2026"), hits)  # Hôm qua chip, always shown
+        self.assertNotIn(("cal", "date", 1), hits)  # calendar only while the date field is focused
+        click(self.state, ("focus", "date"), self.api)
+        out = text(frame(self.state))
+        for label in ("Hôm qua", "Hôm nay", "Mai", "Cuối tháng", "Đầu tháng sau", "Tháng 11/2026", "T2"):
+            self.assertIn(label, out)
+        self.assertIn("→ %s, 06/11/2026" % tui.WEEKDAYS[TODAY.weekday()], out)
+        click(self.state, ("chip", "date", "20/11/2026"), self.api)
+        self.assertEqual(self.state.form.values["date"], "20/11/2026")
+        click(self.state, ("focus", "date"), self.api)
+        click(self.state, ("cal", "date", 1), self.api)
+        self.assertIn("Tháng 12/2026", text(frame(self.state)))
+        click(self.state, ("chip", "date", "01/12/2026"), self.api)
+        click(self.state, ("chip", "amount", "50k"), self.api)
+        click(self.state, ("chip", "category", "nhà"), self.api)
+        tui.dispatch(self.state, "enter", self.api)
+        self.assertEqual(self.api.made("expense")[0]["date"], "2026-12-01")
+
+    def test_calendar_hit_map_positions(self):
+        tui.dispatch(self.state, "a", self.api)
+        click(self.state, ("focus", "date"), self.api)
+        for w, h in ((80, 24), (140, 40)):
+            f = frame(self.state, w, h)
+            days = {a[2]: (r, x0, x1) for r, x0, x1, a in f.hits if a[:2] == ("chip", "date") and a[2][2:] == "/11/2026"}
+            self.assertEqual(len([d for d in days if d[0:2].isdigit()]), 30, w)
+            r1, x1a, _ = days["02/11/2026"]  # Monday
+            r2, x2a, _ = days["09/11/2026"]  # next Monday: same column, next row
+            self.assertEqual((x1a, r2), (x2a, r1 + 1))
+            r, x0, x1 = days["06/11/2026"]
+            self.assertIn("6", f.lines[r].plain[x0:x1])
+
+    def test_plan_form_fits_80x24_with_calendar(self):
+        self.fill_plan()
+        click(self.state, ("chip", "every", "monthly"), self.api)
+        click(self.state, ("focus", "due"), self.api)
+        f = frame(self.state, 80, 24)
+        self.assertEqual(len(f.lines), 24)
+        hits = [a for *_, a in f.hits]
+        self.assertIn(("cal", "due", 1), hits)
+        self.assertIn(("key", "enter"), hits)
+
     def test_category_chip_moves_focus_to_empty_amount(self):
         tui.dispatch(self.state, "a", self.api)
-        click(self.state, ("chip", 1, "nhà"), self.api)
-        self.assertEqual(self.state.form.focus, 0)
+        click(self.state, ("chip", "category", "nhà"), self.api)
+        self.assertEqual(self.state.form.focus, "amount")
         for ch in "75k":
             tui.dispatch(self.state, ch, self.api)
         tui.dispatch(self.state, "enter", self.api)
@@ -190,8 +316,8 @@ class ClickTest(unittest.TestCase):
     def test_api_error_shown_and_form_kept(self):
         self.api.fail = ValueError("danh mục quá dài")
         tui.dispatch(self.state, "a", self.api)
-        click(self.state, ("chip", 0, "50k"), self.api)
-        click(self.state, ("chip", 1, "nhà"), self.api)
+        click(self.state, ("chip", "amount", "50k"), self.api)
+        click(self.state, ("chip", "category", "nhà"), self.api)
         tui.dispatch(self.state, "enter", self.api)
         self.assertIsNotNone(self.state.form)
         self.assertIn("danh mục quá dài", text(frame(self.state)))
@@ -260,16 +386,19 @@ class RealApiTest(unittest.TestCase):
             tui.dispatch(state, ev, call)
         tui.dispatch(state, "enter", call)
         tui.dispatch(state, "p", call)
-        for value in ("thuê nhà", "3tr", "nha", "+4"):
+        for value in ("thuê nhà", "3tr", "nha"):
             for ch in value:
                 tui.dispatch(state, ch, call)
             tui.dispatch(state, "tab", call)
-        click(state, ("chip", 4, "monthly"), call)
+        click(state, ("chip", "every", "monthly"), call)
+        click(state, ("chip", "day", "10"), call)
         tui.dispatch(state, "enter", call)
         self.assertTrue(state.status[1], state.status)
         self.assertEqual(state.balance, 2_000_000)
         self.assertIn("Sẽ âm tiền", text(frame(state)))
         click(state, ("tab", 2), call)
+        self.assertIn("hàng tháng · ngày 10", text(frame(state)))
+        self.assertIn("10/11/2026", text(frame(state)))
         click(state, ("select", 0), call)
         click(state, ("key", "d"), call)
         self.assertEqual(state.balance, -1_000_000)

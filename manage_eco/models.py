@@ -8,6 +8,7 @@ EXPENSE = "expense"
 
 # Plan recurrence
 ONCE = "once"
+DAILY = "daily"
 WEEKLY = "weekly"
 MONTHLY = "monthly"
 
@@ -32,15 +33,20 @@ class Transaction:
 
 @dataclass
 class Plan:
-    """A future planned income/expense (e.g. rent, buying a laptop)."""
+    """A cash-flow item (shown as "Dòng tiền"): future planned income/expense, one-off or recurring."""
     name: str
     amount: int
     kind: str  # INCOME | EXPENSE
     due_date: date
     category: str
-    recurrence: str = ONCE  # ONCE | WEEKLY | MONTHLY
+    recurrence: str = ONCE  # ONCE | DAILY | WEEKLY | MONTHLY
     status: str = PENDING
     id: Optional[int] = None
+    day: Optional[int] = None  # MONTHLY: fixed day of month 1..31 (clamped to month end); None = due_date.day
+
+    @property
+    def anchor_day(self) -> int:
+        return self.day or self.due_date.day
 
 
 @dataclass

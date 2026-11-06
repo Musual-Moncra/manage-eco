@@ -29,9 +29,36 @@ Global flags:
 | `--db PATH` | SQLite file; default `$ECO_DB` or `~/.manage_eco.db` |
 | `--today YYYY-MM-DD` | "today" for relative dates and default month |
 
-Amounts accept `20000000`, `1.250.000`, `1,250,000`, `1.5tr`/`1.5m`
-(million) and `200k` (thousand). Dates accept `2026-11-06`, `06/11/2026`,
-`today`/`hom nay`, `+7`.
+Amounts accept integers, unit suffixes (`20000000`, `1.250.000`, `1,250,000`,
+`1.5tr`/`1.5m`, `200k`) and arithmetic (rounded to đồng):
+
+| Input | Value |
+| --- | --- |
+| `50k+20k` | 70.000 ₫ |
+| `3x150k` | 450.000 ₫ |
+| `1tr:4` | 250.000 ₫ |
+| `(2tr-500k)*2` | 3.000.000 ₫ |
+
+Operators `+ - x X × * : / ÷`, parentheses, spaces and unary minus; no `eval`.
+
+Dates accept ISO `2026-11-06`, `06/11/2026`, `today`/`hom nay`, `+7`, and
+(case/diacritics-insensitive):
+
+| Input | Meaning |
+| --- | --- |
+| `hôm qua` / `qua` | yesterday |
+| `mai` / `ngày mai` | tomorrow |
+| `mốt` / `ngày kia` | +2 days |
+| `-3` / `+7` | days from today |
+| `15` | day 15 of this month (clamped) |
+| `15/11` or `15-11` | 15 Nov, this year |
+| `15/11/26` | 15 Nov 2026 |
+| `thứ 6` / `t6` | next Friday (today excluded) |
+| `chủ nhật` / `cn` | next Sunday |
+| `tuần sau` | +7 days |
+| `tháng sau` | same day next month (clamped) |
+| `đầu tháng sau` | 1st of next month |
+| `cuối tháng` | last day of this month |
 
 ## Envelope and errors
 
@@ -50,7 +77,8 @@ Error (exit 1 `not_found`, exit 2 `invalid`):
 `transaction` objects always have
 `{id,date,amount,kind,category,note,signed}`.
 `plan` objects always have
-`{id,name,amount,kind,due_date,category,recurrence,status}`.
+`{id,name,amount,kind,due_date,category,recurrence,status,day}`.
+"Plan" is shown to users as **"Dòng tiền"**; the command stays `plan`.
 
 ## Commands
 
@@ -101,7 +129,7 @@ python3 -m manage_eco --json --db eco.db --today 2026-11-06 summary --month 2026
 
 `by_category` lists expenses only, largest first.
 
-### `plan add NAME AMOUNT CATEGORY --due DATE [--every once|weekly|monthly] [--income]`
+### `plan add NAME AMOUNT CATEGORY [--due DATE] [--every once|daily|weekly|monthly] [--day N] [--income]`
 
 ```bash
 python3 -m manage_eco --json --db eco.db --today 2026-11-06 \
@@ -109,10 +137,19 @@ python3 -m manage_eco --json --db eco.db --today 2026-11-06 \
 ```
 
 ```json
-{"ok": true, "command": "plan add", "data": {"plan": {"id": 1, "name": "Rent", "amount": 25000000, "kind": "expense", "due_date": "2026-12-01", "category": "housing", "recurrence": "monthly", "status": "pending"}}}
+{"ok": true, "command": "plan add", "data": {"plan": {"id": 1, "name": "Rent", "amount": 25000000, "kind": "expense", "due_date": "2026-12-01", "category": "housing", "recurrence": "monthly", "status": "pending", "day": null}}}
 ```
 
 `--income` makes it planned income; default recurrence is `once`.
+`--every monthly --day N` fixes the monthly day (1..31, clamped, never
+drifts); `--due` is then optional and defaults to the next date ≥ today on
+day N. `--day` with any other recurrence is invalid (exit 2).
+
+```bash
+# daily, and monthly on a fixed day without --due
+plan add Coffee 20k food --due +1 --every daily
+plan add Rent 25tr housing --every monthly --day 31
+```
 
 ### `plan list [--all]`
 
@@ -121,7 +158,7 @@ python3 -m manage_eco --json --db eco.db --today 2026-11-06 plan list --all
 ```
 
 ```json
-{"ok": true, "command": "plan list", "data": {"plans": [{"id": 1, "name": "Rent", "amount": 25000000, "kind": "expense", "due_date": "2026-12-01", "category": "housing", "recurrence": "monthly", "status": "pending"}]}}
+{"ok": true, "command": "plan list", "data": {"plans": [{"id": 1, "name": "Rent", "amount": 25000000, "kind": "expense", "due_date": "2026-12-01", "category": "housing", "recurrence": "monthly", "status": "pending", "day": null}]}}
 ```
 
 Without `--all`, only `pending` plans are returned.
@@ -133,11 +170,12 @@ python3 -m manage_eco --json --db eco.db --today 2026-11-06 plan done 1 -d 2026-
 ```
 
 ```json
-{"ok": true, "command": "plan done", "data": {"transaction": {"id": 2, "date": "2026-11-06", "amount": 25000000, "kind": "expense", "category": "housing", "note": "plan:Rent", "signed": -25000000}, "plan": {"id": 1, "name": "Rent", "amount": 25000000, "kind": "expense", "due_date": "2027-01-01", "category": "housing", "recurrence": "monthly", "status": "pending"}}}
+{"ok": true, "command": "plan done", "data": {"transaction": {"id": 2, "date": "2026-11-06", "amount": 25000000, "kind": "expense", "category": "housing", "note": "plan:Rent", "signed": -25000000}, "plan": {"id": 1, "name": "Rent", "amount": 25000000, "kind": "expense", "due_date": "2027-01-01", "category": "housing", "recurrence": "monthly", "status": "pending", "day": null}}}
 ```
 
-A `once` plan becomes `done`; `weekly`/`monthly` plans advance `due_date` and
-stay `pending` (month-end is clamped, e.g. 31 → 30/28).
+A `once` plan becomes `done`; `daily`/`weekly`/`monthly` plans advance
+`due_date` and stay `pending` (month-end is clamped, e.g. 31 → 28/30, and
+monthly keeps the anchor day so it returns to 31).
 
 ### `plan cancel ID`
 
@@ -146,7 +184,7 @@ python3 -m manage_eco --json --db eco.db --today 2026-11-06 plan cancel 1
 ```
 
 ```json
-{"ok": true, "command": "plan cancel", "data": {"plan": {"id": 1, "name": "Rent", "amount": 25000000, "kind": "expense", "due_date": "2026-12-01", "category": "housing", "recurrence": "monthly", "status": "cancelled"}}}
+{"ok": true, "command": "plan cancel", "data": {"plan": {"id": 1, "name": "Rent", "amount": 25000000, "kind": "expense", "due_date": "2026-12-01", "category": "housing", "recurrence": "monthly", "status": "cancelled", "day": null}}}
 ```
 
 ### `budget set CATEGORY AMOUNT`
@@ -252,7 +290,7 @@ print(execute("dash", {}, store, today))
 ```
 
 Params mirror the CLI arguments: `amount`, `category`, `note`, `date`, `id`,
-`month`, `all`, `name`, `due`, `every`, `income`, `target`, `by`, `days`.
+`month`, `all`, `name`, `due`, `every`, `day`, `income`, `target`, `by`, `days`.
 `store` is a `manage_eco.db.Store`; `today` is a `datetime.date`.
 
 ## Memory

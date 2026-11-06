@@ -4,6 +4,7 @@ from datetime import date
 from manage_eco.db import Store
 from manage_eco.models import (
     CANCELLED,
+    DAILY,
     DONE,
     EXPENSE,
     INCOME,
@@ -63,6 +64,48 @@ class CompletePlanTest(unittest.TestCase):
         stored = self.store.get_plan(pid)
         self.assertEqual(stored.due_date, date(2026, 3, 8))
         self.assertEqual(stored.status, PENDING)
+
+    def test_daily_advances_one_day_and_stays_pending(self):
+        plan = make_plan(due_date=date(2026, 3, 1), recurrence=DAILY)
+        pid = self.store.add_plan(plan)
+
+        complete_plan(self.store, pid, date(2026, 3, 1))
+
+        stored = self.store.get_plan(pid)
+        self.assertEqual(stored.due_date, date(2026, 3, 2))
+        self.assertEqual(stored.status, PENDING)
+
+    def test_monthly_anchor_day_does_not_drift(self):
+        plan = make_plan(due_date=date(2026, 1, 31), recurrence=MONTHLY, day=31)
+        pid = self.store.add_plan(plan)
+
+        complete_plan(self.store, pid, date(2026, 1, 31))
+        stored = self.store.get_plan(pid)
+        self.assertEqual(stored.due_date, date(2026, 2, 28))
+        self.assertEqual(stored.day, 31)
+
+        complete_plan(self.store, pid, date(2026, 2, 28))
+        self.assertEqual(self.store.get_plan(pid).due_date, date(2026, 3, 31))
+
+    def test_monthly_without_day_keeps_anchor(self):
+        plan = make_plan(due_date=date(2026, 1, 31), recurrence=MONTHLY)
+        pid = self.store.add_plan(plan)
+
+        complete_plan(self.store, pid, date(2026, 1, 31))
+        stored = self.store.get_plan(pid)
+        self.assertEqual(stored.due_date, date(2026, 2, 28))
+        self.assertEqual(stored.day, 31)
+
+        complete_plan(self.store, pid, date(2026, 2, 28))
+        self.assertEqual(self.store.get_plan(pid).due_date, date(2026, 3, 31))
+
+    def test_monthly_uses_day_over_due_date_day(self):
+        plan = make_plan(due_date=date(2026, 2, 28), recurrence=MONTHLY, day=15)
+        pid = self.store.add_plan(plan)
+
+        complete_plan(self.store, pid, date(2026, 2, 28))
+
+        self.assertEqual(self.store.get_plan(pid).due_date, date(2026, 3, 15))
 
     def test_monthly_clamps_to_month_end(self):
         plan = make_plan(due_date=date(2026, 1, 31), recurrence=MONTHLY)

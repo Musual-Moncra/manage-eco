@@ -5,6 +5,7 @@ from typing import List
 
 from manage_eco.models import (
     CANCELLED,
+    DAILY,
     DONE,
     EXPENSE,
     MONTHLY,
@@ -24,17 +25,22 @@ def _month_bounds(year: int, month: int):
     return date(year, month, 1), date(year, month, _month_end(year, month))
 
 
-def _add_month(d: date) -> date:
+def _add_month(d: date, day: int) -> date:
     year, month = (d.year + 1, 1) if d.month == 12 else (d.year, d.month + 1)
-    return date(year, month, min(d.day, _month_end(year, month)))
+    return date(year, month, min(day, _month_end(year, month)))
 
 
-def _advance(d: date, recurrence: str) -> date:
-    if recurrence == WEEKLY:
-        return d + timedelta(days=7)
-    if recurrence == MONTHLY:
-        return _add_month(d)
-    return d
+def _advance(plan: Plan) -> date:
+    """Next due date after completing one occurrence (anchor day keeps monthly from drifting)."""
+    if plan.recurrence == DAILY:
+        return plan.due_date + timedelta(days=1)
+    if plan.recurrence == WEEKLY:
+        return plan.due_date + timedelta(days=7)
+    if plan.recurrence == MONTHLY:
+        if plan.day is None:
+            plan.day = plan.anchor_day
+        return _add_month(plan.due_date, plan.anchor_day)
+    return plan.due_date
 
 
 def complete_plan(store, plan_id: int, on: date) -> Transaction:
@@ -56,7 +62,7 @@ def complete_plan(store, plan_id: int, on: date) -> Transaction:
     if plan.recurrence == ONCE:
         plan.status = DONE
     else:
-        plan.due_date = _advance(plan.due_date, plan.recurrence)
+        plan.due_date = _advance(plan)
     store.update_plan(plan)
     return txn
 

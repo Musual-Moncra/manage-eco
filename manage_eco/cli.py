@@ -22,7 +22,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     for name, help_ in (("income", "ghi khoản thu"), ("expense", "ghi khoản chi")):
         s = sub.add_parser(name, help=help_)
-        s.add_argument("amount", help="vd: 200k, 1.5tr, 1.250.000")
+        s.add_argument("amount", help="vd: 200k, 1.5tr, 1.250.000, 50k+20k, 3x150k, 1tr:4")
         s.add_argument("category")
         s.add_argument("-n", "--note", default="")
         s.add_argument("-d", "--date")
@@ -37,14 +37,16 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("summary", help="tổng kết thu/chi theo tháng")
     s.add_argument("--month")
 
-    plan = sub.add_parser("plan", help="dự định chi tiêu/thu nhập tương lai")
+    plan = sub.add_parser("plan", help="dòng tiền: khoản thu/chi tương lai, 1 lần hoặc định kỳ")
     psub = plan.add_subparsers(dest="sub", required=True)
     s = psub.add_parser("add")
     s.add_argument("name")
     s.add_argument("amount")
     s.add_argument("category")
-    s.add_argument("--due", required=True, help="ngày đến hạn: 2026-12-01, 01/12/2026, +30")
-    s.add_argument("--every", choices=["once", "weekly", "monthly"], default="once")
+    s.add_argument("--due", help="ngày đến hạn đầu tiên: 2026-12-01, 01/12/2026, +30")
+    s.add_argument("--every", choices=["once", "daily", "weekly", "monthly"], default="once",
+                   help="1 lần | hàng ngày | hàng tuần | hàng tháng")
+    s.add_argument("--day", type=int, help="hàng tháng: trả cố định vào ngày N (1-31); không cần --due")
     s.add_argument("--income", action="store_true", help="đây là khoản thu dự kiến")
     s = psub.add_parser("list")
     s.add_argument("--all", action="store_true")
@@ -62,7 +64,7 @@ def build_parser() -> argparse.ArgumentParser:
     s = bsub.add_parser("status")
     s.add_argument("--month")
 
-    s = sub.add_parser("forecast", help="dự báo số dư theo các dự định")
+    s = sub.add_parser("forecast", help="dự báo số dư theo dòng tiền")
     s.add_argument("--days", type=int, default=90)
 
     s = sub.add_parser("goal", help="tính tiền cần để dành mỗi tháng")

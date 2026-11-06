@@ -4,16 +4,18 @@ The screen is built as plain lines by pure functions that also record a hit map
 (row, x0, x1, action) for every clickable thing, so a click maps exactly to an
 action and everything is testable without a TTY.
 """
+import calendar
 import os
 import select
 import signal
 import sys
-from datetime import date
+from datetime import date, timedelta
 from typing import Any, Callable, Dict, List, NamedTuple, Optional, Tuple, Union
 
 from rich.cells import cell_len
 from rich.text import Text
 
+from manage_eco import fmt
 from manage_eco.fmt import money, parse_date, parse_money
 
 # --- theme ---
@@ -36,13 +38,17 @@ CHIP_ON = "bold black on " + INCOME_C
 MOUSE_ON = "\x1b[?1000h\x1b[?1006h"
 MOUSE_OFF = "\x1b[?1000l\x1b[?1006l"
 
-TABS = ["Tổng quan", "Giao dịch", "Dự định", "Ngân sách"]
+TABS = ["Tổng quan", "Giao dịch", "Dòng tiền", "Ngân sách"]
 TAB_CMDS = [("dash", {}), ("list", {"all": True}), ("plan list", {}), ("budget status", {})]
-AMOUNT_CHIPS = ["50k", "100k", "200k", "500k", "1tr"]
-EVERY = [("once", "1 lần"), ("weekly", "Hàng tuần"), ("monthly", "Hàng tháng")]
+AMOUNT_CHIPS = [(v, v) for v in ("50k", "100k", "200k", "500k", "1tr")]
+EVERY = [("once", "1 lần"), ("daily", "Hàng ngày"), ("weekly", "Hàng tuần"), ("monthly", "Hàng tháng")]
+DAY_CHIPS = [(str(d), str(d)) for d in (1, 5, 10, 15, 20, 25)] + [("31", "Cuối tháng")]
 KINDS = [("expense", "Chi"), ("income", "Thu")]
-EVERY_VI = dict(EVERY)
-INDENT = 16  # column where form values and chips start
+EVERY_VI = {"once": "1 lần", "daily": "hàng ngày", "weekly": "hàng tuần", "monthly": "hàng tháng"}
+WEEKDAYS = ["Thứ 2", "Thứ 3", "Thứ 4", "Thứ 5", "Thứ 6", "Thứ 7", "Chủ nhật"]
+DATE_FIELDS = ("date", "due")
+REQUIRED = ("name", "amount", "category")
+INDENT = 23  # column where form values and chips start
 
 
 class Field(NamedTuple):
@@ -50,21 +56,23 @@ class Field(NamedTuple):
     label: str
     choices: Optional[List[Tuple[str, str]]] = None
     placeholder: str = ""
+    show_if: Optional[Tuple[str, str]] = None  # (other field, value) that makes this field visible
 
 
-_TX_FIELDS = [Field("amount", "Số tiền", placeholder="vd: 50k, 1.5tr, 200000"),
-              Field("category", "Danh mục", placeholder="chọn bên dưới hoặc gõ"),
-              Field("note", "Ghi chú", placeholder="(không bắt buộc)"),
+_AMOUNT = Field("amount", "Số tiền", placeholder="vd: 50k, 1.5tr, 50k+20k, 3x150k")
+_CATEGORY = Field("category", "Danh mục", placeholder="chọn bên dưới hoặc gõ")
+_TX_FIELDS = [_AMOUNT, _CATEGORY, Field("note", "Ghi chú", placeholder="(không bắt buộc)"),
               Field("date", "Ngày", placeholder="hôm nay")]
 FORMS = {
     "expense": ("Thêm khoản chi", _TX_FIELDS),
     "income": ("Thêm khoản thu", _TX_FIELDS),
-    "plan": ("Thêm dự định", [Field("name", "Tên", placeholder="vd: thuê nhà"),
-                              Field("amount", "Số tiền", placeholder="vd: 3tr"),
-                              Field("category", "Danh mục", placeholder="chọn bên dưới hoặc gõ"),
-                              Field("due", "Ngày đến hạn", placeholder="+30 (30 ngày nữa), hoặc 15/12/2026"),
-                              Field("every", "Lặp", EVERY),
-                              Field("kind", "Loại", KINDS)]),
+    "plan": ("Thêm dòng tiền", [Field("name", "Tên", placeholder="vd: lương, thuê nhà"),
+                                _AMOUNT, _CATEGORY,
+                                Field("every", "Lặp", EVERY),
+                                Field("day", "Ngày trả hằng tháng", placeholder="chọn bên dưới (không bắt buộc)",
+                                      show_if=("every", "monthly")),
+                                Field("due", "Ngày bắt đầu"),
+                                Field("kind", "Loại", KINDS)]),
 }
 
 ApiCall = Callable[[str, Dict[str, Any]], Dict[str, Any]]
@@ -133,24 +141,78 @@ def hit_at(hits: List[Hit], row: int, col: int) -> Optional[Action]:
 
 # --- state ---
 class Form:
-    def __init__(self, name: str, cats: Dict[str, List[str]]):
+    def __init__(self, name: str, cats: Dict[str, List[str]], today: date):
         self.name = name
         self.title, self.fields = FORMS[name]
         self.values = {f.key: (f.choices[0][0] if f.choices else "") for f in self.fields}  # type: Dict[str, str]
-        self.focus = 0
+        self.focus = self.fields[0].key
         self.errors = {}  # type: Dict[str, str]
         self.error = ""
         self.cats = cats
+        self.today = today
+        self.months = {}  # type: Dict[str, Tuple[int, int]]  # calendar month shown per date field
 
     def kind(self) -> str:
         return self.values.get("kind") or self.name
 
-    def chips(self, f: Field) -> List[str]:
+    def visible(self) -> List[Field]:
+        return [f for f in self.fields if not f.show_if or self.values.get(f.show_if[0]) == f.show_if[1]]
+
+    def field(self) -> Field:
+        vis = self.visible()
+        return next((f for f in vis if f.key == self.focus), vis[0])
+
+    def move(self, step: int) -> None:
+        keys = [f.key for f in self.visible()]
+        i = keys.index(self.focus) if self.focus in keys else 0
+        self.focus = keys[(i + step) % len(keys)]
+
+    def day(self) -> Optional[int]:
+        """Chosen monthly pay day, if the field is visible and valid."""
+        v = self.values.get("day", "").strip()
+        if self.values.get("every") != "monthly" or not v.isdigit() or not 1 <= int(v) <= 31:
+            return None
+        return int(v)
+
+    def default_date(self, key: str) -> str:
+        if key == "date":
+            return "hom nay"
+        return "+30" if self.values.get("every") == "once" else "+1"
+
+    def date_value(self, key: str) -> Optional[date]:
+        """The date a date field currently means (its default when empty), or None."""
+        v = self.values[key].strip()
+        if not v and key == "due" and self.day():
+            return None
+        try:
+            return parse_date(v or self.default_date(key), self.today)
+        except ValueError:
+            return None
+
+    def placeholder(self, f: Field) -> str:
+        if f.key == "due":
+            day = self.day()
+            if day:
+                return "không bắt buộc · tự tính lần tới %s" % ("cuối tháng" if day == 31 else "ngày %d" % day)
+            return "mặc định: 30 ngày nữa" if self.values.get("every") == "once" else "mặc định: ngày mai"
+        return f.placeholder
+
+    def chips(self, f: Field) -> List[Tuple[str, str]]:
         if f.key == "amount":
             return AMOUNT_CHIPS
         if f.key == "category":
-            return list(self.cats.get(self.kind(), []))[:8]
+            return [(c, c) for c in list(self.cats.get(self.kind(), []))[:8]]
+        if f.key == "day":
+            return DAY_CHIPS
+        if f.key in DATE_FIELDS:
+            return date_chips(self.today)
         return []
+
+    def chip_on(self, key: str, value: str) -> bool:
+        if key in DATE_FIELDS:
+            dv = self.date_value(key)
+            return dv is not None and parse_date(value, self.today) == dv
+        return self.values.get(key, "").strip() == value
 
 
 class State:
@@ -203,6 +265,26 @@ def _vi_date(iso: str, short: bool = False) -> str:
     return "%s/%s" % (d, m) if short else "%s/%s/%s" % (d, m, y)
 
 
+def _dmy(d: date) -> str:
+    return d.strftime("%d/%m/%Y")
+
+
+def date_chips(today: date) -> List[Tuple[str, str]]:
+    last = date(today.year, today.month, calendar.monthrange(today.year, today.month)[1])
+    return [(_dmy(d), label) for d, label in ((today - timedelta(days=1), "Hôm qua"), (today, "Hôm nay"),
+                                              (today + timedelta(days=1), "Mai"), (last, "Cuối tháng"),
+                                              (last + timedelta(days=1), "Đầu tháng sau"))]
+
+
+def recurrence_label(p: Dict[str, Any]) -> str:
+    r = p.get("recurrence", "")
+    label = EVERY_VI.get(r, r)
+    if r == "monthly":
+        day = p.get("day") or int(p["due_date"][8:])
+        label += " · " + ("cuối tháng" if day == 31 else "ngày %d" % day)
+    return label
+
+
 def _signed(amount: int, kind: str = "") -> Tuple[str, str]:
     v = -amount if kind == "expense" else amount
     return money(v, signed=True), EXPENSE_C if v < 0 else INCOME_C
@@ -246,7 +328,7 @@ def action_line(state: State) -> Line:
     if state.confirm:
         ln.add("Xoá %s? " % state.confirm["label"], "bold " + EXPENSE_C)
         return ln.button("Có", "y", "y", primary=True).button("Không", "n", "n")
-    ln.button("+ Chi", "a", "a").button("+ Thu", "i", "i").button("+ Dự định", "p", "p")
+    ln.button("+ Chi", "a", "a").button("+ Thu", "i", "i").button("+ Dòng tiền", "p", "p")
     if state.selected is not None and state.tab == 2:
         ln.button("✓ Xong", "d", "d")
     if state.selected is not None and state.tab == 1:
@@ -296,7 +378,7 @@ def overview_lines(d: Dict[str, Any], width: int) -> List[Line]:
     out.append(_title("Sắp tới 30 ngày"))
     upcoming = (d.get("upcoming") or [])[:5]
     if not upcoming:
-        out.append(Line().add("   Không có dự định nào trong 30 ngày tới.", MUTED))
+        out.append(Line().add("   Không có dòng tiền nào trong 30 ngày tới.", MUTED))
     name_w = max(8, width - 52)
     for r in upcoming:
         amt, c = _signed(r["amount"])
@@ -348,18 +430,18 @@ def transactions_lines(state: State, width: int, height: int) -> List[Line]:
 
 
 def plans_lines(state: State, width: int, height: int) -> List[Line]:
-    name_w = max(4, width - 46)
-    head = (Line().add(" ").cell("Đến hạn", 10, MUTED).add("  ").cell("Tên", name_w, MUTED).add("  ")
-            .cell("Lặp", 11, MUTED).add("  ").cell("Số tiền", 16, MUTED, right=True))
+    name_w = max(4, width - 58)
+    head = (Line().add(" ").cell("Ngày tới", 10, MUTED).add("  ").cell("Tên", name_w, MUTED).add("  ")
+            .cell("Lặp", 23, MUTED).add("  ").cell("Số tiền", 16, MUTED, right=True))
     today = state.today.isoformat()
 
     def row(p: Dict[str, Any]) -> Line:
         amt, c = _signed(p["amount"], p["kind"])
         return (Line().add(" ").cell(_vi_date(p["due_date"]), 10, WARN_C if p["due_date"] < today else "").add("  ")
-                .cell(p["name"], name_w).add("  ").cell(EVERY_VI.get(p.get("recurrence", ""), ""), 11, MUTED)
+                .cell(p["name"], name_w).add("  ").cell(recurrence_label(p), 23, MUTED)
                 .add("  ").cell(amt, 16, c, right=True))
     return list_lines(state, state.items(), head, row, height,
-                      "Chưa có dự định. Nhấn [+ Dự định] để thêm (vd: thuê nhà, mua laptop).")
+                      "Chưa có dòng tiền. Nhấn [+ Dòng tiền] để thêm (vd: lương, thuê nhà, mua laptop).")
 
 
 def budgets_lines(d: Dict[str, Any], width: int) -> List[Line]:
@@ -386,51 +468,109 @@ def budgets_lines(d: Dict[str, Any], width: int) -> List[Line]:
     return out
 
 
-def chip_lines(chips: List[str], field: int, width: int, max_lines: int = 2) -> List[Line]:
-    """Clickable chips under a form field, wrapped onto at most `max_lines` rows."""
+def chip_lines(chips: List[Tuple[str, str]], key: str, width: int, on: Callable[[str], bool],
+               max_lines: int = 2) -> List[Line]:
+    """Clickable (value, label) chips under a form field, wrapped onto at most `max_lines` rows."""
     lines = []  # type: List[Line]
     ln = None  # type: Optional[Line]
-    for c in chips:
-        w = cell_len(c) + 3
+    for value, label in chips:
+        w = cell_len(label) + 3
         if ln is None or ln.x + w > width:
             if len(lines) == max_lines:
                 break
             ln = Line().add(" " * INDENT)
             lines.append(ln)
-        ln.click(" %s " % c, ("chip", field, c), CHIP).add(" ")
+        ln.click(" %s " % label, ("chip", key, value), CHIP_ON if on(value) else CHIP).add(" ")
     return lines
 
 
-def form_lines(form: Form, width: int) -> List[Line]:
+def calendar_lines(form: Form, key: str) -> List[Line]:
+    """Mini month calendar for a date field: ‹ › change month, click a day to pick it."""
+    dv = form.date_value(key)
+    y, m = form.months.get(key) or ((dv or form.today).year, (dv or form.today).month)
+    pad = " " * INDENT
+    out = [Line().add(pad).click(" ‹ ", ("cal", key, -1), BTN).add("  Tháng %02d/%d  " % (m, y), "bold")
+           .click(" › ", ("cal", key, 1), BTN),
+           Line().add(pad + "".join("%3s" % d for d in ("T2", "T3", "T4", "T5", "T6", "T7", "CN")), MUTED)]
+    for week in calendar.monthcalendar(y, m):
+        ln = Line().add(pad)
+        for d in week:
+            if not d:
+                ln.add("   ")
+                continue
+            day = date(y, m, d)
+            style = CHIP_ON if day == dv else "bold underline " + ACCENT if day == form.today else ""
+            ln.click("%3d" % d, ("chip", key, _dmy(day)), style)
+        out.append(ln)
+    return out
+
+
+def _preview(form: Form, f: Field) -> Optional[Tuple[str, str]]:
+    """Live hint after a field: amount arithmetic result, or the weekday + date a date field means."""
+    value = form.values[f.key].strip()
+    if f.key == "amount":
+        fn = getattr(fmt, "money_preview", None)  # added by fmt owner; absent on older fmt
+        p = fn(value) if fn and value else None
+        return (p, "bold " + INCOME_C) if p else None
+    if f.key in DATE_FIELDS:
+        fn = getattr(fmt, "date_preview", None)
+        if fn and value:
+            try:
+                p = fn(value, form.today)
+            except Exception:
+                p = None
+            if p:
+                return p, ACCENT
+        dv = form.date_value(f.key)
+        if dv:
+            return "→ %s, %s" % (WEEKDAYS[dv.weekday()], _dmy(dv)), ACCENT
+        return ("⚠ chưa hiểu ngày này", WARN_C) if value else None
+    return None
+
+
+def form_lines(form: Form, width: int) -> Tuple[List[Line], Tuple[int, int]]:
+    """Form rows plus the (first, last) row of the focused field's block, for scrolling."""
     out = [Line(), _title(form.title)]
     if form.error:
         out.append(Line().add("   ✗ " + form.error, EXPENSE_C))
     out.append(Line())
-    for i, f in enumerate(form.fields):
-        focused = i == form.focus
-        ln = Line(("focus", i)).add(" ▸ " if focused else "   ", ACCENT)
+    focus_rows = (0, 0)
+    for f in form.visible():
+        start, focused = len(out), f.key == form.focus
+        ln = Line(("focus", f.key)).add(" ▸ " if focused else "   ", ACCENT)
         ln.cell(f.label, INDENT - 3, "bold " + ACCENT if focused else "")
         value = form.values[f.key]
         if f.choices:
             for val, label in f.choices:
-                ln.click(" %s " % label, ("chip", i, val), CHIP_ON if val == value else CHIP).add(" ")
+                ln.click(" %s " % label, ("chip", f.key, val), CHIP_ON if val == value else CHIP).add(" ")
         else:
             ln.add(value, "bold" if focused else "")
             if focused:
                 ln.add("▏", ACCENT)
             if not value:
-                ln.add(f.placeholder, MUTED)
+                ln.add(form.placeholder(f), MUTED)
+            preview = _preview(form, f)
+            if preview:
+                ln.add("  " + preview[0], preview[1])
         out.append(ln)
-        out.extend(chip_lines(form.chips(f), i, width))
+        out.extend(chip_lines(form.chips(f), f.key, width, lambda v, k=f.key: form.chip_on(k, v)))
+        if focused and f.key in DATE_FIELDS:
+            out.extend(calendar_lines(form, f.key))
         if f.key in form.errors:
             out.append(Line().add(" " * INDENT + "⚠ " + form.errors[f.key], EXPENSE_C))
-    out += [Line(), Line().add("   Tab / ↑↓ chuyển ô · nhấp vào ô hoặc gợi ý để chọn", MUTED)]
-    return out
+        if focused:
+            focus_rows = (start, len(out) - 1)
+    out += [Line(), Line().add("   Tab/↑↓ chuyển ô · nhấp để chọn · Số tiền nhận phép tính + - x :", MUTED)]
+    return out, focus_rows
 
 
 def body_lines(state: State, width: int, height: int) -> List[Line]:
     if state.form:
-        return form_lines(state.form, width)
+        lines, (first, last) = form_lines(state.form, width)
+        if len(lines) > height:  # scroll so the focused field (with its calendar) stays visible
+            start = min(first, max(0, last - height + 1))
+            lines = lines[start:start + height]
+        return lines
     d = state.data.get(state.tab, {})
     if state.tab == 0:
         return overview_lines(d, width) if d else [Line(), Line().add("   Không có dữ liệu.", MUTED)]
@@ -462,26 +602,33 @@ def build_frame(state: State, width: int, height: int) -> Frame:
 def validate(form: Form, today: date) -> Tuple[str, Dict[str, Any], Dict[str, str]]:
     """(api cmd, params, field errors); errors are Vietnamese and keyed by field."""
     v = {k: s.strip() for k, s in form.values.items()}
+    visible = {f.key for f in form.visible()}
     errors, params = {}, {}  # type: Dict[str, str], Dict[str, Any]
     if "name" in v:
         if v["name"]:
             params["name"] = v["name"]
         else:
-            errors["name"] = "Nhập tên dự định"
+            errors["name"] = "Nhập tên dòng tiền"
     try:
         params["amount"] = parse_money(v["amount"])
     except ValueError:
-        errors["amount"] = "Số tiền không hợp lệ (vd: 50k, 1.5tr, 200000)"
+        errors["amount"] = "Số tiền không hợp lệ (vd: 50k, 1.5tr, 50k+20k, 3x150k)"
     if v["category"]:
         params["category"] = v["category"]
     else:
         errors["category"] = "Chọn hoặc gõ một danh mục"
-    for key, default in (("date", "hom nay"), ("due", "+30")):
-        if key in v:
-            try:
-                params[key] = parse_date(v[key] or default, today).isoformat()
-            except ValueError:
-                errors[key] = "Ngày không hợp lệ (vd: 06/11/2026, 2026-11-06, +3)"
+    if "day" in visible and v["day"]:
+        if form.day():
+            params["day"] = form.day()
+        else:
+            errors["day"] = "Ngày trả phải là số từ 1 đến 31"
+    for key in DATE_FIELDS:
+        if key not in v or (key == "due" and not v[key] and "day" in params):
+            continue  # due omitted: api picks the next date on the chosen day
+        try:
+            params[key] = parse_date(v[key] or form.default_date(key), today).isoformat()
+        except ValueError:
+            errors[key] = "Ngày không hợp lệ (vd: 06/11/2026, 2026-11-06, +3)"
     if form.name == "plan":
         params.update(every=v["every"], income=v["kind"] == "income")
         return "plan add", params, errors
@@ -504,7 +651,7 @@ def open_form(state: State, name: str, api: ApiCall) -> None:
         cats = api("categories", {})
     except Exception:
         cats = {}
-    state.form = Form(name, cats)
+    state.form = Form(name, cats, state.today)
 
 
 def submit(state: State, api: ApiCall) -> None:
@@ -512,7 +659,7 @@ def submit(state: State, api: ApiCall) -> None:
     cmd, params, errors = validate(form, state.today)
     form.errors = errors
     if errors:
-        form.focus = next(i for i, f in enumerate(form.fields) if f.key in errors)
+        form.focus = next((f.key for f in form.visible() if f.key in errors), form.focus)
         state.set_status("Kiểm tra lại các ô được đánh dấu ⚠", False)
         return
     try:
@@ -528,16 +675,16 @@ def submit(state: State, api: ApiCall) -> None:
 
 def _form_key(state: State, key: str, api: ApiCall) -> None:
     form = state.form
-    f = form.fields[form.focus]
+    f = form.field()
     if key == "esc":
         state.form = None
         state.set_status("Đã huỷ")
     elif key == "enter":
         submit(state, api)
     elif key in ("tab", "down"):
-        form.focus = (form.focus + 1) % len(form.fields)
+        form.move(1)
     elif key in ("shift-tab", "up"):
-        form.focus = (form.focus - 1) % len(form.fields)
+        form.move(-1)
     elif f.choices:
         if key in ("left", "right", " "):
             keys = [c[0] for c in f.choices]
@@ -622,13 +769,18 @@ def handle_click(state: State, x: int, y: int, api: ApiCall) -> None:
     elif kind == "focus" and state.form:
         state.form.focus = action[1]
     elif kind == "chip" and state.form:
-        form = state.form
-        f = form.fields[action[1]]
-        form.values[f.key] = action[2]
-        form.errors.pop(f.key, None)
+        form, key = state.form, action[1]
+        form.values[key] = action[2]
+        form.errors.pop(key, None)
         # jump to the next required field still empty, so "click category, type amount, Enter" works
-        form.focus = next((j for j, g in enumerate(form.fields)
-                           if g.key in ("name", "amount", "category") and not form.values[g.key]), action[1])
+        form.focus = next((f.key for f in form.visible() if f.key in REQUIRED and not form.values[f.key]), key)
+    elif kind == "cal" and state.form:
+        form, key = state.form, action[1]
+        dv = form.date_value(key) or form.today
+        y, m = form.months.get(key) or (dv.year, dv.month)
+        m += action[2]
+        form.months[key] = (y + (m - 1) // 12, (m - 1) % 12 + 1)
+        form.focus = key
 
 
 def dispatch(state: State, event: Event, api: ApiCall) -> None:

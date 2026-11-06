@@ -42,19 +42,21 @@ def tx_table(txs: List[dict]) -> Table:
     return t
 
 
-def plan_table(items: List[dict], today: str = "", title: str = "Dự định") -> Table:
+def plan_table(items: List[dict], today: str = "", title: str = "Dòng tiền") -> Table:
     t = _table(title, "#", "Đến hạn", "Tên", "Danh mục", "Số tiền", "Lặp", "Trạng thái", right=("#", "Số tiền"))
-    rec = {"once": "1 lần", "weekly": "hàng tuần", "monthly": "hàng tháng"}
+    rec = {"once": "1 lần", "daily": "hàng ngày", "weekly": "hàng tuần", "monthly": "hàng tháng"}
     st = {"pending": "[%s]chờ[/]" % WARN, "done": "[%s]xong[/]" % INC, "cancelled": "[dim]huỷ[/]"}
     for p in items:
         signed = p["amount"] if p["kind"] == "income" else -p["amount"]
         due = p["due_date"]
         if p["status"] == "pending" and today and due < today:
             due = "[bold %s]%s ⚠[/]" % (EXP, due)
-        t.add_row(str(p["id"]), due, p["name"], p["category"], _signed(signed),
-                  rec.get(p["recurrence"], p["recurrence"]), st.get(p["status"], p["status"]))
+        every = rec.get(p["recurrence"], p["recurrence"])
+        if p.get("day"):
+            every += " (ngày %d)" % p["day"]
+        t.add_row(str(p["id"]), due, p["name"], p["category"], _signed(signed), every, st.get(p["status"], p["status"]))
     if not items:
-        t.add_row("", "", "[dim]chưa có dự định[/]", "", "", "", "")
+        t.add_row("", "", "[dim]chưa có dòng tiền[/]", "", "", "", "")
     return t
 
 
@@ -74,7 +76,7 @@ def forecast_table(rows: List[dict], title: str = "Dự báo dòng tiền") -> T
     for r in rows:
         t.add_row(r["date"], r["name"], _signed(r["amount"]), _bal(r["balance"]))
     if not rows:
-        t.add_row("[dim]không có dự định nào trong khoảng này[/]", "", "", "")
+        t.add_row("[dim]không có dòng tiền nào trong khoảng này[/]", "", "", "")
     return t
 
 
@@ -123,7 +125,7 @@ def dashboard(d: dict) -> Group:
     parts = [Panel(Text.from_markup("[bold %s]Manage Eco[/]  ·  %s" % (ACCENT, d["today"])), box=box.HEAVY,
                    border_style=ACCENT), stats(d["balance"], d["month"])]
     if d["overdue"]:
-        parts.append(plan_table(d["overdue"], d["today"], title="⚠ Dự định quá hạn"))
+        parts.append(plan_table(d["overdue"], d["today"], title="⚠ Dòng tiền quá hạn"))
     parts.append(budget_table(d["budgets"]))
     parts.append(forecast_table(d["upcoming"], title="30 ngày tới"))
     parts.append(low_warning(d["lowest"]))
@@ -144,7 +146,7 @@ def render(cmd: str, d: dict):
         return summary_view(d)
     if cmd == "plan add":
         p = d["plan"]
-        return Text.from_markup("✓ Đã thêm dự định #%d  %s  %s  (đến hạn %s)"
+        return Text.from_markup("✓ Đã thêm dòng tiền #%d  %s  %s  (đến hạn %s)"
                                 % (p["id"], p["name"], money(p["amount"]), p["due_date"]))
     if cmd == "plan list":
         return plan_table(d["plans"])
@@ -152,7 +154,7 @@ def render(cmd: str, d: dict):
         return Text.from_markup("✓ Đã thực hiện \"%s\" → giao dịch #%d %s"
                                 % (d["plan"]["name"], d["transaction"]["id"], _signed(d["transaction"]["signed"])))
     if cmd == "plan cancel":
-        return Text.from_markup("✓ Đã huỷ dự định #%d" % d["plan"]["id"])
+        return Text.from_markup("✓ Đã huỷ dòng tiền #%d" % d["plan"]["id"])
     if cmd == "budget set":
         return Text.from_markup("✓ Ngân sách %s: %s/tháng" % (d["budget"]["category"], money(d["budget"]["limit"])))
     if cmd == "budget status":
