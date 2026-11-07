@@ -13,15 +13,48 @@ from typing import Any, Callable, Dict, Optional
 from manage_eco import cashflow, plans
 from manage_eco.fmt import parse_date, parse_money
 from manage_eco.models import (
-    DAILY, EXPENSE, INCOME, MONTHLY, ONCE, PENDING, WEEKLY, Budget, Goal, Plan, Transaction,
+    DAILY, EXPENSE, INCOME, MONTHLY, ONCE, PENDING, WEEKLY, Account, Budget, Goal, Plan, Transaction, Transfer,
 )
 
 RECURRENCES = (ONCE, DAILY, WEEKLY, MONTHLY)
 
 
 def tx_dict(t: Transaction) -> dict:
-    return {"id": t.id, "date": t.date.isoformat(), "amount": t.amount, "kind": t.kind,
-            "category": t.category, "note": t.note, "signed": t.signed}
+    d = {"id": t.id, "date": t.date.isoformat(), "amount": t.amount, "kind": t.kind,
+         "category": t.category, "note": t.note, "signed": t.signed}
+    if t.account_id is not None:
+        d["account_id"] = t.account_id
+    return d
+
+
+def account_dict(a: Account, store=None, today: Optional[date] = None) -> dict:
+    d = {
+        "id": a.id,
+        "name": a.name,
+        "initial_balance": a.initial_balance,
+        "is_default": a.is_default,
+    }
+    if store is not None:
+        bal = store.account_balance(a.id, as_of=today)
+        d["balance"] = bal
+        tot = store.total_balance(as_of=today)
+        d["pct"] = round((bal / tot * 100), 1) if tot > 0 else 0.0
+    return d
+
+
+def transfer_dict(tr: Transfer, store=None) -> dict:
+    from_acc = store.get_account(tr.from_account_id) if store else None
+    to_acc = store.get_account(tr.to_account_id) if store else None
+    return {
+        "id": tr.id,
+        "date": tr.date.isoformat(),
+        "amount": tr.amount,
+        "from_account_id": tr.from_account_id,
+        "from_account": from_acc.name if from_acc else str(tr.from_account_id),
+        "to_account_id": tr.to_account_id,
+        "to_account": to_acc.name if to_acc else str(tr.to_account_id),
+        "note": tr.note,
+    }
 
 
 def plan_dict(p: Plan) -> dict:
@@ -35,6 +68,41 @@ def _amount(v: Any) -> int:
             raise ValueError("số tiền phải > 0")
         return v
     return parse_money(str(v))
+
+
+def _initial_amount(v: Any) -> int:
+    if v in (None, ""):
+        return 0
+    if isinstance(v, int) and not isinstance(v, bool):
+        if v < 0:
+            raise ValueError("số dư ban đầu phải >= 0")
+        return v
+    s = str(v).strip()
+    if s == "0":
+        return 0
+    val = parse_money(s)
+    if val < 0:
+        raise ValueError("số dư ban đầu phải >= 0")
+    return val
+
+
+def _resolve_account_id(store, acc_val: Any) -> Optional[int]:
+    if acc_val is None or acc_val == "":
+        default_acc = store.get_default_account()
+        return default_acc.id if default_acc else None
+    if isinstance(acc_val, int):
+        if not store.get_account(acc_val):
+            raise LookupError(f"tài khoản {acc_val} không tồn tại")
+        return acc_val
+    s = str(acc_val).strip()
+    if s.isdigit():
+        aid = int(s)
+        if store.get_account(aid):
+            return aid
+    acc = store.get_account_by_name(s)
+    if not acc:
+        raise LookupError(f"tài khoản {acc_val!r} không tồn tại")
+    return acc.id
 
 
 def _date(v: Any, today: date) -> date:
@@ -66,8 +134,9 @@ def _require(params: dict, *keys: str) -> None:
 def _record(kind: str, params: dict, store, today: date) -> dict:
     _require(params, "amount")
     cat = str(params.get("category") or "").strip()
+    acc_id = _resolve_account_id(store, params.get("account"))
     t = Transaction(_date(params.get("date"), today), _amount(params["amount"]), kind,
-                    cat, str(params.get("note") or ""))
+                    cat, str(params.get("note") or ""), account_id=acc_id)
     store.add_transaction(t)
     return {"transaction": tx_dict(t), "balance": store.balance()}
 
@@ -126,6 +195,8 @@ def edit(params, store, today):
         t.date = _date(params["date"], today)
     if _given(params, "kind"):
         t.kind = _kind(params["kind"])
+    if "account" in params:
+        t.account_id = _resolve_account_id(store, params["account"])
     store.update_transaction(t)
     return {"transaction": tx_dict(t), "balance": store.balance()}
 
@@ -186,6 +257,9 @@ def plan_done(params, store, today):
     pid = int(params["id"])
     _plan_or_raise(store, pid)
     t = plans.complete_plan(store, pid, _date(params.get("date"), today))
+    if params.get("account"):
+        t.account_id = _resolve_account_id(store, params["account"])
+        store.update_transaction(t)
     return {"transaction": tx_dict(t), "plan": plan_dict(store.get_plan(pid))}
 
 
@@ -391,17 +465,100 @@ def goal_rm(params, store, today):
     return {"deleted": gid, "total_saved": store.total_saved() if hasattr(store, "total_saved") else 0}
 
 
+def account_add(params, store, today):
+    _require(params, "name")
+    name = str(params["name"]).strip()
+    init_bal = _initial_amount(params.get("initial_balance"))
+    is_def = bool(params.get("default", False))
+    a = Account(name, init_bal, is_def)
+    aid = store.add_account(a)
+    return {"account": account_dict(store.get_account(aid), store, today)}
+
+
+def account_list(params, store, today):
+    accs = store.list_accounts()
+    return {
+        "accounts": [account_dict(a, store, today) for a in accs],
+        "total_balance": store.total_balance(today),
+    }
+
+
+def account_edit(params, store, today):
+    _require(params, "id")
+    aid = int(params["id"])
+    a = store.get_account(aid)
+    if a is None:
+        raise LookupError("không tìm thấy tài khoản #%d" % aid)
+    if _given(params, "name"):
+        a.name = str(params["name"]).strip()
+    if _given(params, "initial_balance"):
+        a.initial_balance = _initial_amount(params["initial_balance"])
+    if params.get("default") is not None:
+        a.is_default = bool(params["default"])
+    store.update_account(a)
+    return {"account": account_dict(store.get_account(aid), store, today)}
+
+
+def account_rm(params, store, today):
+    _require(params, "id")
+    aid = int(params["id"])
+    if not store.delete_account(aid):
+        raise LookupError("không tìm thấy tài khoản #%d" % aid)
+    return {"deleted": aid}
+
+
+def account_transfer(params, store, today):
+    _require(params, "from", "to", "amount")
+    from_id = _resolve_account_id(store, params["from"])
+    to_id = _resolve_account_id(store, params["to"])
+    if from_id is None:
+        raise LookupError("tài khoản nguồn không tồn tại")
+    if to_id is None:
+        raise LookupError("tài khoản đích không tồn tại")
+    if from_id == to_id:
+        raise ValueError("không thể chuyển tiền đến cùng tài khoản")
+    amt = _amount(params["amount"])
+    d = _date(params.get("date"), today)
+    note = str(params.get("note") or "").strip()
+    tr = Transfer(d, amt, from_id, to_id, note)
+    tid = store.add_transfer(tr)
+    created_tr = next((t for t in store.list_transfers() if t.id == tid), tr)
+    return {
+        "transfer": transfer_dict(created_tr, store),
+        "from_balance": store.account_balance(from_id),
+        "to_balance": store.account_balance(to_id),
+    }
+
+
+def account_transfers(params, store, today):
+    acc_val = params.get("account")
+    acc_id = _resolve_account_id(store, acc_val) if acc_val else None
+    start = _date(params["start"], today) if params.get("start") else None
+    end = _date(params["end"], today) if params.get("end") else None
+    trs = store.list_transfers(account_id=acc_id, start=start, end=end)
+    return {"transfers": [transfer_dict(tr, store) for tr in trs]}
+
+
+def account_set_default(params, store, today):
+    _require(params, "id")
+    aid = int(params["id"])
+    store.set_default_account(aid)
+    return {"account": account_dict(store.get_account(aid), store, today)}
+
+
 def dash(params, store, today):
     month = summary({}, store, today)
     goals = [plans.goal_dict(g, store, today) for g in store.list_goals()] if hasattr(store, "list_goals") else []
     total_saved = store.total_saved() if hasattr(store, "total_saved") else 0
     bal = store.balance(today)
+    accounts = [account_dict(a, store, today) for a in store.list_accounts()] if hasattr(store, "list_accounts") else []
     return {
         "today": today.isoformat(),
         "balance": bal,
         "total_saved": total_saved,
         "free_balance": bal - total_saved,
         "month": month,
+        "accounts": accounts,
         "overdue": [plan_dict(p) for p in plans.overdue(store, today)],
         "budgets": plans.budget_status(store, today.year, today.month),
         "goals": goals,
@@ -459,6 +616,9 @@ COMMANDS = {
     "forecast": forecast, "goal": goal,
     "goal add": goal_add, "goal list": goal_list, "goal save": goal_save, "goal take": goal_take,
     "goal edit": goal_edit, "goal rm": goal_rm, "goal delete": goal_rm,
+    "account add": account_add, "account list": account_list, "account edit": account_edit,
+    "account rm": account_rm, "account delete": account_rm, "account transfer": account_transfer,
+    "account transfers": account_transfers, "account set-default": account_set_default,
     "dash": dash, "categories": categories, "sound": sound, "icons": icons,
 }  # type: Dict[str, Callable[[dict, Any, date], dict]]
 
