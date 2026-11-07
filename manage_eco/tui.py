@@ -10,6 +10,7 @@ animating the loop blocks on input: idle means zero redraws.
 import calendar
 import os
 import re
+import secrets
 import select
 import signal
 import sys
@@ -23,6 +24,7 @@ from rich.text import Text
 
 from manage_eco import fmt
 from manage_eco.fmt import money, parse_date, parse_money, progress_bar
+from manage_eco.share_data import ALL_SHAREABLE_TABS, TAB_KEY_BY_INDEX
 
 try:
     from manage_eco import anim
@@ -74,13 +76,13 @@ _PLAIN_FACES = {"success": "\\(^o^)/", "error": "(T_T)", "info": "(^_^)"}
 # icons: emoji = v5 set; symbol (default) = single-width BMP glyphs found in Menlo / SF Mono / DejaVu, no emoji;
 # off = no icons. "w" = cells reserved for a category icon. "toast" = faces passed to anim (None: anim's own).
 ICON_SETS = {
-    "emoji": {"tabs": ["🏠", "🏦", "💸", "🔁", "🎯", "🏺", "📈"], "settings": "⚙", "cancel": "⊘", "happy": "(◕‿◕)", "worried": "(・_・;)", "sad": "(｡•́︿•̀｡)",
+    "emoji": {"tabs": ["🏠", "🏦", "💸", "🔁", "🎯", "🏺", "📈", "🔗"], "settings": "⚙", "cancel": "⊘", "happy": "(◕‿◕)", "worried": "(・_・;)", "sad": "(｡•́︿•̀｡)",
               "sound_on": "🔊", "sound_off": "🔇", "warn": "⚠", "late": "⏰", "edit": "✎", "w": 2, "toast": None,
               "popup": "emoji"},
-    "symbol": {"tabs": ["⌂", "⌸", "⇄", "↻", "◎", "◈", "⌁"], "settings": "⚙", "cancel": "⊘", "happy": "(^_^)", "worried": "(o_o;)", "sad": "(T_T)",
+    "symbol": {"tabs": ["⌂", "⌸", "⇄", "↻", "◎", "◈", "⌁", "☍"], "settings": "⚙", "cancel": "⊘", "happy": "(^_^)", "worried": "(o_o;)", "sad": "(T_T)",
                "sound_on": "♪ bật", "sound_off": "♪ tắt", "warn": "▲", "late": "»", "edit": "✎", "w": 1,
                "toast": _PLAIN_FACES, "popup": "symbol"},
-    "off": {"tabs": ["", "", "", "", "", "", ""], "settings": "", "cancel": "", "happy": "(^_^)", "worried": "(o_o;)", "sad": "(T_T)",
+    "off": {"tabs": ["", "", "", "", "", "", "", ""], "settings": "", "cancel": "", "happy": "(^_^)", "worried": "(o_o;)", "sad": "(T_T)",
             "sound_on": "Âm: bật", "sound_off": "Âm: tắt", "warn": "!", "late": "!", "edit": "", "w": 0,
             "toast": _PLAIN_FACES, "popup": "symbol"},
 }
@@ -91,8 +93,8 @@ ASCII = False
 ICON_MODE = "symbol"
 G = dict(UNICODE_GLYPHS, **ICON_SETS["symbol"])  # current glyphs; see set_style()
 
-TABS = ["Tổng quan", "Tài khoản", "Giao dịch", "Dòng tiền", "Ngân sách", "Hũ tiết kiệm", "Biểu đồ"]
-TABS_SHORT = ["Tổng", "Tài", "Giao", "Dòng", "Ngân", "Hũ", "Biểu"]
+TABS = ["Tổng quan", "Tài khoản", "Giao dịch", "Dòng tiền", "Ngân sách", "Hũ tiết kiệm", "Biểu đồ", "Chia sẻ"]
+TABS_SHORT = ["Tổng", "Tài", "Giao", "Dòng", "Ngân", "Hũ", "Biểu", "Chia"]
 CHART_RANGES = [("30", "1T"), ("90", "3T"), ("180", "6T"), ("365", "1N"), ("0", "Tất cả")]
 CHART_AHEAD = [("0", "+0"), ("30", "+30"), ("90", "+90")]
 CHART_MODES = [("line", "Line"), ("candle", "Nến")]
@@ -441,6 +443,80 @@ class State:
         self.size = (80, 24)
         # interaction VFX: only the tab underline slide (click ripple/press/glow removed on request)
         self.slide = None  # type: Optional[Tuple[int, int, float]]  # (from tab, to tab, start)
+        # sharing
+        self.share_active = False
+        self.share_server = None
+        self.share_tunnel = None
+        self.share_pin = f"{secrets.randbelow(9000) + 1000}"
+        self.share_allowed_tabs = {"overview", "cashflow", "budgets", "goals", "chart"}
+        self.share_sync_mode = "free"
+
+    def toggle_share(self) -> None:
+        if self.share_active:
+            if self.share_tunnel:
+                self.share_tunnel.stop()
+                self.share_tunnel = None
+            if self.share_server:
+                self.share_server.stop()
+                self.share_server = None
+            self.share_active = False
+            self.set_status("Đã tắt chia sẻ trực tiếp")
+        else:
+            try:
+                from manage_eco.web import start_share_server
+                from manage_eco.tunnel import CloudflareTunnel
+                store = getattr(self, "store", None)
+                if store is None:
+                    from manage_eco.db import Store
+                    store = Store()
+                    self.store = store
+                cur_tab_key = TAB_KEY_BY_INDEX[self.tab] if self.tab < len(TAB_KEY_BY_INDEX) else "overview"
+                self.share_server = start_share_server(
+                    store,
+                    self.today,
+                    port=0,
+                    pin=self.share_pin,
+                    allowed_tabs=self.share_allowed_tabs,
+                    active_tab=cur_tab_key,
+                    sync_mode=self.share_sync_mode,
+                )
+                self.share_tunnel = CloudflareTunnel()
+                self.share_tunnel.start(self.share_server.port)
+                self.share_active = True
+                self.set_status("Đã bật chia sẻ trực tiếp")
+            except Exception as e:
+                self.set_status(f"Lỗi bật chia sẻ: {e}", False)
+
+    def toggle_share_tab(self, tab_key: str) -> None:
+        if tab_key in self.share_allowed_tabs:
+            self.share_allowed_tabs.remove(tab_key)
+        else:
+            self.share_allowed_tabs.add(tab_key)
+        if self.share_server:
+            self.share_server.update_config(allowed_tabs=self.share_allowed_tabs)
+
+    def set_share_sync_mode(self, mode: str) -> None:
+        self.share_sync_mode = mode
+        if self.share_server:
+            self.share_server.update_config(sync_mode=mode)
+
+    def notify_share(self, event_type: str = "update") -> None:
+        if self.share_active and self.share_server:
+            try:
+                self.share_server.notify_change(event_type)
+            except Exception:
+                pass
+
+    def get_share_url(self) -> Optional[str]:
+        if not self.share_active:
+            return None
+        pin = self.share_pin
+        if self.share_tunnel and self.share_tunnel.url:
+            return f"{self.share_tunnel.url}?pin={pin}"
+        if self.share_server:
+            from manage_eco.tunnel import get_local_ip
+            return f"http://{get_local_ip()}:{self.share_server.port}/?pin={pin}"
+        return None
 
     def items(self) -> List[Dict[str, Any]]:
         d = self.data.get(self.tab, {})
@@ -528,6 +604,8 @@ def load(state: State, api: ApiCall) -> None:
     n = len(state.items())
     if state.selected is not None and state.selected >= n:
         state.selected = n - 1 if n else None
+    if getattr(state, "share_active", False):
+        state.notify_share("data_changed")
 
 
 # --- feedback: sound, toast, sparkle, counters ---
@@ -760,7 +838,7 @@ def tabs_line(active: int, width: int) -> Line:
             for i, name in enumerate(labels):
                 icon = G["tabs"][i] + " " if icons and G["tabs"][i] else ""
                 if compact_pad:
-                    text = (" %s%s" % (icon, name)) if name or not icon else icon
+                    text = ("%s%s" % (icon, name)) if name or not icon else icon
                 else:
                     text = (" %s%s " % (icon, name)) if name or not icon else " %s" % icon
                 ln.pill([(text, TAB_ON if i == active else TAB_OFF)], ("tab", i),
@@ -772,6 +850,7 @@ def tabs_line(active: int, width: int) -> Line:
     icon_only = [TABS_SHORT[i] if i == active or not G["tabs"][i] else "" for i in range(n)]
     digits = [str(i + 1) for i in range(n)]
     return fit([make(TABS, True, True),
+                make(TABS, True, True, compact_pad=True),
                 make(active_full, True, True),
                 make(active_full, True, True, compact_pad=True),
                 make(TABS_SHORT, True, True),
@@ -796,7 +875,8 @@ def action_line(state: State, width: int) -> Line:
                    2: [("+ Chi", "+Chi", "a", "a", False), ("+ Thu", "+Thu", "i", "i", False)],
                    3: [("+ Dòng tiền", "+Dòng", "p", "p", False)],
                    4: [("+ Ngân sách", "+NS", "b", "b", False)],
-                   5: [("+ Tạo hũ", "+Hũ", "goal_add", "+Hũ", False)]}.get(
+                   5: [("+ Tạo hũ", "+Hũ", "goal_add", "+Hũ", False)],
+                   7: [("Bật/Tắt s", "Bật/Tắt", "s", "s", False), ("Sao chép c", "Chép", "c", "c", False)]}.get(
             state.tab, [("+ Chi", "+Chi", "a", "a", False), ("+ Thu", "+Thu", "i", "i", False),
                         ("+ Dòng tiền", "+Dòng", "p", "p", False)])
         item = selected_item(state)
@@ -1616,7 +1696,125 @@ def body_lines(state: State, width: int, height: int) -> List[Line]:
         return budgets_lines(state, d, width, height)
     if state.tab == 5:
         return goal_tab_lines(state, width, height)
-    return chart_lines(state, width, height)
+    if state.tab == 6:
+        return chart_lines(state, width, height)
+    return share_tab_lines(state, width, height)
+
+
+def share_tab_lines(state: State, width: int, height: int) -> List[Line]:
+    out: List[Line] = []
+    out.append(Line())
+
+    # 1. Title / Switch
+    l_hdr = Line().add("   ")
+    if state.share_active:
+        l_hdr.click(" ● ĐANG CHIA SẺ ", ("toggle_share",), "bold #1e1b2e on #86efac")
+        l_hdr.add("  nhấp hoặc bấm ", MUTED)
+        l_hdr.add("s", "bold " + PINK)
+        l_hdr.add(" để tắt", MUTED)
+        if state.share_server:
+            cnt = state.share_server.client_count()
+            l_hdr.add(" · ", RULE_C)
+            l_hdr.add(f"{cnt} thiết bị đang xem", "bold " + ACCENT)
+    else:
+        l_hdr.click(" ○ ĐÃ TẮT CHIA SẺ ", ("toggle_share",), "bold #ede9fe on #352d5c")
+        l_hdr.add("  nhấp hoặc bấm ", MUTED)
+        l_hdr.add("s", "bold " + PINK)
+        l_hdr.add(" để bật chia sẻ trực tiếp", MUTED)
+    out.append(l_hdr)
+    out.append(Line())
+
+    if state.share_active:
+        # 2. Connection Details
+        pin = state.share_pin
+        from manage_eco.tunnel import get_local_ip, generate_terminal_qr
+        local_ip = get_local_ip()
+        port = state.share_server.port if state.share_server else 8080
+        local_url = f"http://{local_ip}:{port}/?pin={pin}"
+        tunnel_url = f"{state.share_tunnel.url}?pin={pin}" if (state.share_tunnel and state.share_tunnel.url) else None
+        active_url = tunnel_url or local_url
+
+        l_link = Line().add("   Đường link: ", MUTED)
+        l_link.add(active_url, "bold " + INCOME_C)
+        l_link.add("   ")
+        l_link.click("[Sao chép c]", ("copy_share_url",), "bold #ede9fe on #352d5c")
+        out.append(l_link)
+
+        l_sub = Line().add("   Mã PIN: ", MUTED).add(pin, "bold " + PINK)
+        if tunnel_url:
+            l_sub.add("   (Đã bật HTTPS Cloudflare cho 4G từ xa)", MUTED)
+        else:
+            l_sub.add(f"   (Wi-Fi nội bộ: {local_url})", MUTED)
+        out.append(l_sub)
+        out.append(Line())
+
+        # 3. QR Code
+        qr_lines = generate_terminal_qr(active_url)
+        for ql in qr_lines:
+            out.append(Line().add("   " + ql, ACCENT))
+        out.append(Line())
+    else:
+        out.append(Line().add("   Chia sẻ thông tin tài chính (Tổng quan, Hũ, Ngân sách...) cho bạn gái xem", MUTED))
+        out.append(Line().add("   trên điện thoại qua 4G/Wi-Fi ở chế độ chỉ đọc (View-only an toàn tuyệt đối).", MUTED))
+        out.append(Line())
+
+    # 4. Tab Whitelist Permissions
+    out.append(Line().add("   CÁC TAB ĐƯỢC PHÉP XEM TRÊN WEB (nhấp để chọn):", "bold " + ACCENT))
+    share_items = [
+        ("overview", "1.Tổng quan"),
+        ("accounts", "2.Tài khoản"),
+        ("transactions", "3.Giao dịch"),
+        ("cashflow", "4.Dòng tiền"),
+        ("budgets", "5.Ngân sách"),
+        ("goals", "6.Hũ tiết kiệm"),
+        ("chart", "7.Biểu đồ"),
+    ]
+    l_c1 = Line().add("   ")
+    for key, label in share_items[:4]:
+        is_on = key in state.share_allowed_tabs
+        mark = "✓" if is_on else " "
+        style = CHIP_ON if is_on else CHIP
+        l_c1.click(f"[{mark} {label}]", ("toggle_share_tab", key), style).add(" ")
+    out.append(l_c1)
+
+    l_c2 = Line().add("   ")
+    for key, label in share_items[4:]:
+        is_on = key in state.share_allowed_tabs
+        mark = "✓" if is_on else " "
+        style = CHIP_ON if is_on else CHIP
+        l_c2.click(f"[{mark} {label}]", ("toggle_share_tab", key), style).add(" ")
+    out.append(l_c2)
+    out.append(Line())
+
+    # 5. Sync Mode
+    out.append(Line().add("   CHẾ ĐỘ ĐỒNG BỘ HIỂN THỊ:", "bold " + ACCENT))
+    is_free = state.share_sync_mode == "free"
+    l_sync = Line().add("   ")
+    l_sync.click("[Tự do duyệt web]", ("set_share_sync_mode", "free"), CHIP_ON if is_free else CHIP)
+    l_sync.add("  ")
+    l_sync.click("[Đi cùng tôi (Follow Me)]", ("set_share_sync_mode", "follow"), CHIP_ON if not is_free else CHIP)
+    out.append(l_sync)
+
+    return out
+
+
+def copy_share_url(state: State) -> None:
+    url = state.get_share_url()
+    if not url:
+        state.set_status("Chưa bật chia sẻ", False)
+        return
+    copied = False
+    try:
+        import subprocess
+        proc = subprocess.Popen(["pbcopy"], stdin=subprocess.PIPE)
+        proc.communicate(url.encode("utf-8"))
+        copied = True
+    except Exception:
+        pass
+    if copied:
+        state.set_status(f"Đã chép link: {url}")
+    else:
+        state.set_status(f"Link: {url}")
 
 
 # --- overlays (toast + sparkle) ---
@@ -2217,6 +2415,9 @@ def switch_tab(state: State, tab: int, api: ApiCall) -> None:
         play(state, "tab")
         if tab in (0, 4, 5):
             state.bars_t0 = state.now
+        if state.share_active and state.share_server:
+            cur_key = TAB_KEY_BY_INDEX[tab] if tab < len(TAB_KEY_BY_INDEX) else "overview"
+            state.share_server.update_config(active_tab=cur_key)
     load(state, api)
 
 
@@ -2323,6 +2524,16 @@ def handle_key(state: State, key: str, api: ApiCall) -> None:
         open_account_add(state, api)
     elif key == "account_transfer" or (key == "t" and state.tab == 1):
         open_account_transfer(state, api)
+    elif state.tab == 7 and key in ("s", "enter", " "):
+        state.toggle_share()
+    elif state.tab == 7 and key in ("1", "2", "3", "4", "5", "6", "7"):
+        idx = int(key) - 1
+        if idx < len(TAB_KEY_BY_INDEX):
+            state.toggle_share_tab(TAB_KEY_BY_INDEX[idx])
+    elif state.tab == 7 and key == "m":
+        state.set_share_sync_mode("follow" if state.share_sync_mode == "free" else "free")
+    elif state.tab == 7 and key == "c":
+        copy_share_url(state)
     elif key == "s":
         state.settings = True
     elif key in ("[", "]") and state.tab in (2, 4):
@@ -2381,7 +2592,8 @@ def handle_key(state: State, key: str, api: ApiCall) -> None:
              "info", False))
 
 
-_CLICK_SOUND = ("key", "chip", "cal", "month", "plans", "chartset", "chart_jump", "set")
+_CLICK_SOUND = ("key", "chip", "cal", "month", "plans", "chartset", "chart_jump", "set",
+                "toggle_share", "toggle_share_tab", "set_share_sync_mode", "copy_share_url")
 
 
 def handle_click(state: State, x: int, y: int, api: ApiCall) -> None:
@@ -2422,6 +2634,14 @@ def handle_click(state: State, x: int, y: int, api: ApiCall) -> None:
             set_sound(state, api, action[2] == "on")
         else:
             set_icon_mode(state, api, action[2])
+    elif kind == "toggle_share":
+        state.toggle_share()
+    elif kind == "toggle_share_tab":
+        state.toggle_share_tab(action[1])
+    elif kind == "set_share_sync_mode":
+        state.set_share_sync_mode(action[1])
+    elif kind == "copy_share_url":
+        copy_share_url(state)
     elif kind == "focus" and state.form:
         state.form.focus = action[1]
     elif kind == "chip" and state.form:
@@ -2583,6 +2803,10 @@ def run_tui(store, today: date, api: Optional[ApiCall] = None, clock: Callable[[
     except KeyboardInterrupt:
         pass
     finally:
+        if hasattr(state, "share_server") and state.share_server:
+            state.share_server.stop()
+        if hasattr(state, "share_tunnel") and state.share_tunnel:
+            state.share_tunnel.stop()
         os.write(out_fd, MOUSE_OFF.encode())
         termios.tcsetattr(fd, termios.TCSADRAIN, old)
         signal.signal(signal.SIGWINCH, old_winch)
