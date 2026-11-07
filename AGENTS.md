@@ -85,12 +85,13 @@ Error (exit 1 `not_found`, exit 2 `invalid`):
 
 ## Commands
 
-### `income` / `expense AMOUNT [CATEGORY] [-n NOTE] [-d DATE]`
+### `income` / `expense AMOUNT [CATEGORY] [-n NOTE] [-d DATE] [-a ACCOUNT]`
 
 ```bash
 python3 -m manage_eco --json --db eco.db --today 2026-11-06 \
-  income 20000000 salary -n luong -d 2026-11-01
-# Category is optional (defaults to empty string, grouped as "Khác"):
+  income 20000000 salary -n luong -d 2026-11-01 -a Techcombank
+# Category is optional (defaults to empty string, grouped as "Khác");
+# Account is optional (defaults to default primary account):
 python3 -m manage_eco --json --db eco.db --today 2026-11-06 expense 50k
 ```
 
@@ -318,6 +319,34 @@ python3 -m manage_eco --json --db eco.db goal edit 1 --target 35tr
 
 # Remove goal
 python3 -m manage_eco --json --db eco.db goal rm 1
+```
+
+### `account <add|list|edit|rm|transfer|transfers|set-default>`
+
+Manage wallets/accounts (tiền mặt, ngân hàng, ví điện tử) and internal transfers:
+```bash
+# Add account
+python3 -m manage_eco --json --db eco.db account add "Tiền mặt" 1.5tr --default
+python3 -m manage_eco --json --db eco.db account add "ZaloPay" 500k
+python3 -m manage_eco --json --db eco.db account add "Techcombank" 20tr
+
+# List accounts
+python3 -m manage_eco --json --db eco.db account list
+
+# Transfer money between accounts (internal transfers do not affect monthly expense/income)
+python3 -m manage_eco --json --db eco.db account transfer Techcombank ZaloPay 2tr -n "nap vi"
+
+# List transfers
+python3 -m manage_eco --json --db eco.db account transfers
+
+# Set default account
+python3 -m manage_eco --json --db eco.db account set-default 2
+
+# Edit account
+python3 -m manage_eco --json --db eco.db account edit 1 --initial-balance 2tr
+
+# Remove account (fails if transactions or transfers exist)
+python3 -m manage_eco --json --db eco.db account rm 3
 ```
 
 ### `dash`

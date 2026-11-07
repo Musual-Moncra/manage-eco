@@ -55,6 +55,30 @@ def goal_table(goals: List[dict]) -> Table:
     return t
 
 
+def account_table(accounts: List[dict], total_balance: int = 0) -> Table:
+    t = _table("Tài khoản & Ví tiền", "#", "Tên tài khoản", "Số dư ban đầu", "Số dư hiện tại", "Tỷ lệ",
+               right=("#", "Số dư ban đầu", "Số dư hiện tại", "Tỷ lệ"))
+    for a in accounts:
+        def_tag = " [bold %s][Mặc định][/]" % ACCENT if a.get("is_default") else ""
+        bal_str = _bal(a["balance"])
+        pct_str = "%3.1f%%" % a.get("pct", 0.0)
+        t.add_row(str(a["id"]), a["name"] + def_tag, money(a["initial_balance"]), bal_str, pct_str)
+    if not accounts:
+        t.add_row("", "[dim]chưa có tài khoản[/]", "", "", "")
+    return t
+
+
+def transfer_table(transfers: List[dict]) -> Table:
+    t = _table("Lịch sử chuyển tiền", "#", "Ngày", "Từ tài khoản", "Đến tài khoản", "Số tiền", "Ghi chú",
+               right=("#", "Số tiền"))
+    for tr in transfers:
+        t.add_row(str(tr["id"]), tr["date"], tr["from_account"], tr["to_account"],
+                  money(tr["amount"]), "[%s]%s[/]" % (MUTED, tr["note"]))
+    if not transfers:
+        t.add_row("", "", "", "[dim]chưa có giao dịch chuyển tiền[/]", "", "")
+    return t
+
+
 def plan_table(items: List[dict], today: str = "", title: str = "Dòng tiền") -> Table:
     t = _table(title, "#", "Đến hạn", "Tên", "Danh mục", "Số tiền", "Lặp", "Trạng thái", right=("#", "Số tiền"))
     rec = {"once": "1 lần", "daily": "hàng ngày", "weekly": "hàng tuần", "monthly": "hàng tháng"}
@@ -198,6 +222,30 @@ def render(cmd: str, d: dict):
         return Text.from_markup("✓ Đã sửa mục tiêu #%d %s: %s trước %s" % (g["id"], g["name"], money(g["target"]), g["by"]))
     if cmd in ("goal rm", "goal delete"):
         return Text.from_markup("✓ Đã xoá mục tiêu #%d" % d["deleted"])
+    if cmd == "account list":
+        return Group(account_table(d["accounts"], d.get("total_balance", 0)),
+                     Text.from_markup("Tổng tài sản: %s" % _bal(d.get("total_balance", 0))))
+    if cmd == "account add":
+        a = d["account"]
+        def_tag = " [mặc định]" if a.get("is_default") else ""
+        return Text.from_markup("✓ Đã thêm tài khoản #%d \"%s\"%s: số dư %s"
+                                % (a["id"], a["name"], def_tag, money(a["balance"])))
+    if cmd == "account edit":
+        a = d["account"]
+        return Text.from_markup("✓ Đã sửa tài khoản #%d \"%s\": số dư %s"
+                                % (a["id"], a["name"], money(a["balance"])))
+    if cmd in ("account rm", "account delete"):
+        return Text.from_markup("✓ Đã xoá tài khoản #%d" % d["deleted"])
+    if cmd == "account set-default":
+        a = d["account"]
+        return Text.from_markup("✓ Đã đặt tài khoản #%d \"%s\" làm mặc định" % (a["id"], a["name"]))
+    if cmd == "account transfer":
+        tr = d["transfer"]
+        return Text.from_markup("✓ Đã chuyển %s từ \"%s\" sang \"%s\" (Số dư nguồn: %s, đích: %s)"
+                                % (money(tr["amount"]), tr["from_account"], tr["to_account"],
+                                   money(d["from_balance"]), money(d["to_balance"])))
+    if cmd == "account transfers":
+        return transfer_table(d["transfers"])
     if cmd == "dash":
         return dashboard(d)
     if cmd == "edit":

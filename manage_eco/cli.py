@@ -26,6 +26,7 @@ def build_parser() -> argparse.ArgumentParser:
         s.add_argument("category", nargs="?", default="", help="(không bắt buộc)")
         s.add_argument("-n", "--note", default="")
         s.add_argument("-d", "--date")
+        s.add_argument("-a", "--account", help="tên hoặc ID tài khoản")
 
     s = sub.add_parser("list", help="liệt kê giao dịch")
     s.add_argument("--month", help="YYYY-MM (mặc định tháng này)")
@@ -40,6 +41,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--category")
     s.add_argument("-n", "--note")
     s.add_argument("-d", "--date")
+    s.add_argument("-a", "--account")
     s.add_argument("--kind", choices=["income", "expense"])
 
     s = sub.add_parser("summary", help="tổng kết thu/chi theo tháng")
@@ -61,6 +63,7 @@ def build_parser() -> argparse.ArgumentParser:
     s = psub.add_parser("done", help="đánh dấu đã thực hiện (ghi giao dịch)")
     s.add_argument("id", type=int)
     s.add_argument("-d", "--date")
+    s.add_argument("-a", "--account")
     s = psub.add_parser("cancel")
     s.add_argument("id", type=int)
     s = psub.add_parser("edit", help="sửa dòng tiền (chỉ đổi các trường được nêu)")
@@ -116,6 +119,39 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("target")
     s.add_argument("--by", required=True)
 
+    account = sub.add_parser("account", help="quản lý tài khoản / ví tiền")
+    asub = account.add_subparsers(dest="sub")
+    s = asub.add_parser("add", help="thêm tài khoản mới")
+    s.add_argument("name", help="tên tài khoản")
+    s.add_argument("initial_balance", nargs="?", default="0", help="số dư ban đầu")
+    s.add_argument("--default", action="store_true", help="đặt làm tài khoản mặc định")
+
+    s = asub.add_parser("list", help="liệt kê tài khoản")
+
+    s = asub.add_parser("edit", help="sửa tài khoản")
+    s.add_argument("id", type=int)
+    s.add_argument("--name")
+    s.add_argument("--initial-balance")
+    s.add_argument("--default", action="store_true", default=None)
+
+    s = asub.add_parser("rm", help="xoá tài khoản")
+    s.add_argument("id", type=int)
+
+    s = asub.add_parser("set-default", help="đặt tài khoản làm mặc định")
+    s.add_argument("id", type=int)
+
+    s = asub.add_parser("transfer", help="chuyển tiền giữa hai tài khoản")
+    s.add_argument("from", help="tài khoản nguồn (tên hoặc ID)")
+    s.add_argument("to", help="tài khoản đích (tên hoặc ID)")
+    s.add_argument("amount", help="số tiền chuyển")
+    s.add_argument("-d", "--date")
+    s.add_argument("-n", "--note", default="")
+
+    s = asub.add_parser("transfers", help="lịch sử chuyển tiền")
+    s.add_argument("--account", help="lọc theo tài khoản (tên hoặc ID)")
+    s.add_argument("--start")
+    s.add_argument("--end")
+
     sub.add_parser("dash", help="bảng tổng quan")
     sub.add_parser("categories", help="danh mục đã dùng (nhiều nhất trước)")
     sub.add_parser("ui", help="giao diện toàn màn hình (TUI)")
@@ -141,6 +177,9 @@ def _preprocess_argv(argv: Optional[List[str]]) -> Optional[List[str]]:
                 out.append("list")
             elif argv[i + 1] not in ("add", "list", "save", "take", "edit", "rm", "-h", "--help"):
                 out.append("_calc")
+        elif argv[i] == "account":
+            if i + 1 == len(argv) or (argv[i + 1].startswith("-") and argv[i + 1] not in ("-h", "--help")):
+                out.append("list")
         i += 1
     return out
 
@@ -160,6 +199,9 @@ def main(argv: Optional[List[str]] = None, store: Optional[Store] = None,
             cmd = "goal " + sub_name
         else:
             cmd = "goal list"
+    elif args.cmd == "account":
+        sub_name = getattr(args, "sub", None)
+        cmd = "account " + (sub_name or "list")
     else:
         cmd = args.cmd + (" " + args.sub if getattr(args, "sub", None) else "")
     params = {k: v for k, v in vars(args).items() if k not in _GLOBAL}
