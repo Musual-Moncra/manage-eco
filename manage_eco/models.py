@@ -25,6 +25,7 @@ class Transaction:
     category: str = ""
     note: str = ""
     id: Optional[int] = None
+    account_id: Optional[int] = None
 
     @property
     def signed(self) -> int:
@@ -65,4 +66,24 @@ class Goal:
     target: int
     by: date
     saved: int = 0
+    id: Optional[int] = None
+
+
+@dataclass
+class Account:
+    """An account or wallet (tiền mặt, ngân hàng, ví điện tử...)."""
+    name: str
+    initial_balance: int = 0
+    is_default: bool = False
+    id: Optional[int] = None
+
+
+@dataclass
+class Transfer:
+    """An internal transfer between two accounts."""
+    date: date
+    amount: int
+    from_account_id: int
+    to_account_id: int
+    note: str = ""
     id: Optional[int] = None
