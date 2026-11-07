@@ -32,3 +32,17 @@ class WebTemplateTest(unittest.TestCase):
             content = resp.read().decode("utf-8")
         self.assertIn("function renderChart", content)
         self.assertIn("currentSelectedTab === 'chart'", content)
+
+    def test_initial_data_hydration_in_html(self):
+        # Valid PIN should hydrate initialData in HTML for instant 0ms first render
+        url = f"http://127.0.0.1:{self.port}/?pin=5678"
+        with urllib.request.urlopen(url) as resp:
+            content = resp.read().decode("utf-8")
+        self.assertIn('<script id="initialData" type="application/json">', content)
+        self.assertIn('"allowed_tab_keys"', content)
+
+        # Missing or invalid PIN should not hydrate state
+        no_pin_url = f"http://127.0.0.1:{self.port}/"
+        with urllib.request.urlopen(no_pin_url) as resp:
+            content_no_pin = resp.read().decode("utf-8")
+        self.assertNotIn('<script id="initialData"', content_no_pin)

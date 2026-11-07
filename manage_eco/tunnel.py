@@ -290,12 +290,7 @@ class TailscaleTunnel:
     def start(self, local_port: int, wait_seconds: float = 3.0) -> Optional[str]:
         bin_path = self._bin or "tailscale"
         try:
-            # 1. Check if tailscale is stopped -> wake up if needed
-            stat = subprocess.run([bin_path, "status"], capture_output=True, text=True, timeout=2.0)
-            if "stopped" in (stat.stdout or "").lower() or "stopped" in (stat.stderr or "").lower():
-                subprocess.run([bin_path, "up"], capture_output=True, text=True, timeout=2.0)
-
-            # 2. Run funnel in background
+            # 1. Run funnel directly in background (fast path, <0.07s)
             res = subprocess.run(
                 [bin_path, "funnel", "--yes", "--bg", str(local_port)],
                 capture_output=True,
@@ -303,6 +298,16 @@ class TailscaleTunnel:
                 timeout=wait_seconds,
             )
             out = (res.stdout or "") + " " + (res.stderr or "")
+            if "stopped" in out.lower():
+                subprocess.run([bin_path, "up"], capture_output=True, text=True, timeout=2.0)
+                res = subprocess.run(
+                    [bin_path, "funnel", "--yes", "--bg", str(local_port)],
+                    capture_output=True,
+                    text=True,
+                    timeout=wait_seconds,
+                )
+                out = (res.stdout or "") + " " + (res.stderr or "")
+
             m = re.search(r"https://[a-zA-Z0-9.-]+\.ts\.net", out)
             if m:
                 self.url = m.group(0).rstrip("/")

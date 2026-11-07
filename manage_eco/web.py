@@ -82,8 +82,14 @@ class ShareServer:
                     params = parse_qs(parsed.query)
 
                     if parsed.path == "/":
-                        # Serves HTML client
-                        html = server_self._render_index_html()
+                        # Serves HTML client, hydrated with initial snapshot when valid PIN is given
+                        initial_snap = None
+                        if self._verify_pin(params):
+                            try:
+                                initial_snap = server_self.get_snapshot()
+                            except Exception:
+                                initial_snap = None
+                        html = server_self._render_index_html(initial_snap)
                         content = html.encode("utf-8")
                         self.send_response(HTTPStatus.OK)
                         self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -217,8 +223,15 @@ class ShareServer:
                 except queue.Full:
                     pass
 
-    def _render_index_html(self) -> str:
-        return """<!DOCTYPE html>
+    def _render_index_html(self, initial_snapshot: Optional[Dict[str, Any]] = None) -> str:
+        hydration_tag = ""
+        if initial_snapshot is not None:
+            snap_json = json.dumps(initial_snapshot, ensure_ascii=False)
+            hydration_tag = f'<script id="initialData" type="application/json">{snap_json}</script>'
+        return _HTML_TEMPLATE.replace("<!-- HYDRATION_PLACEHOLDER -->", hydration_tag)
+
+
+_HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="vi">
 <head>
     <meta charset="utf-8">
@@ -406,6 +419,7 @@ class ShareServer:
     </header>
 
     <main id="mainContainer">
+        <!-- HYDRATION_PLACEHOLDER -->
         <div class="tab-content" id="tabContent">
             <div style="text-align: center; padding: 40px; color: var(--muted);">Đang kết nối...</div>
         </div>
@@ -870,20 +884,39 @@ class ShareServer:
             };
         }
 
-        // Initial fetch
+        // Instant hydration if initialData was injected by server
+        const initialEl = document.getElementById('initialData');
+        let hydrated = false;
+        if (initialEl) {
+            try {
+                const initData = JSON.parse(initialEl.textContent);
+                if (initData && initData.allowed_tab_keys && initData.allowed_tab_keys.length > 0) {
+                    applyState(initData);
+                    hydrated = true;
+                }
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        // Connect SSE and fetch only if not already hydrated
         if (pin) {
-            fetch('/api/data?pin=' + encodeURIComponent(pin))
-                .then(r => {
-                    if (!r.ok) throw new Error('Unauthorized');
-                    return r.json();
-                })
-                .then(data => {
-                    applyState(data);
-                    initSSE();
-                })
-                .catch(() => {
-                    document.getElementById('tabContent').innerHTML = '<div class="card" style="text-align: center; color: var(--coral);">Mã PIN không đúng hoặc phiên chia sẻ đã kết thúc.</div>';
-                });
+            if (hydrated) {
+                initSSE();
+            } else {
+                fetch('/api/data?pin=' + encodeURIComponent(pin))
+                    .then(r => {
+                        if (!r.ok) throw new Error('Unauthorized');
+                        return r.json();
+                    })
+                    .then(data => {
+                        applyState(data);
+                        initSSE();
+                    })
+                    .catch(() => {
+                        document.getElementById('tabContent').innerHTML = '<div class="card" style="text-align: center; color: var(--coral);">Mã PIN không đúng hoặc phiên chia sẻ đã kết thúc.</div>';
+                    });
+            }
         }
     </script>
 </body>
