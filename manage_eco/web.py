@@ -657,6 +657,166 @@ class ShareServer:
             return html;
         }
 
+        function renderChart(data) {
+            if (!data || (!data.series && !data.forecast)) {
+                return '<div class="card"><div class="card-title">Biểu đồ dòng tiền</div><p style="color: var(--muted);">Chưa có đủ dữ liệu lịch sử để vẽ biểu đồ.</p></div>';
+            }
+            const series = data.series || [];
+            const forecast = data.forecast || [];
+            if (series.length === 0 && forecast.length === 0) {
+                return '<div class="card"><div class="card-title">Biểu đồ dòng tiền</div><p style="color: var(--muted);">Chưa có dữ liệu giao dịch.</p></div>';
+            }
+
+            // Stats
+            const curBal = series.length > 0 ? series[series.length - 1].balance : 0;
+            let totalInc = 0;
+            let totalExp = 0;
+            series.forEach(s => {
+                totalInc += (s.income || 0);
+                totalExp += (s.expense || 0);
+            });
+
+            let minForecast = curBal;
+            if (forecast.length > 0) {
+                minForecast = Math.min(...forecast.map(f => f.balance));
+            }
+
+            // Chart range calculations
+            const allPoints = [];
+            series.forEach(s => allPoints.push({ date: s.date, balance: s.balance, isForecast: false }));
+            forecast.forEach(f => allPoints.push({ date: f.date, balance: f.balance, isForecast: true }));
+
+            let minVal = Math.min(...allPoints.map(p => p.balance));
+            let maxVal = Math.max(...allPoints.map(p => p.balance));
+            if (minVal === maxVal) {
+                minVal -= 100000;
+                maxVal += 100000;
+            }
+            const pad = (maxVal - minVal) * 0.12;
+            const yMin = minVal - pad;
+            const yMax = maxVal + pad;
+            const yRange = (yMax - yMin) || 1;
+
+            const w = 500;
+            const h = 230;
+            const chartL = 40;
+            const chartR = 470;
+            const chartT = 30;
+            const chartB = 180;
+            const chartW = chartR - chartL;
+            const chartH = chartB - chartT;
+
+            function getX(idx, total) {
+                if (total <= 1) return chartL;
+                return chartL + (idx / (total - 1)) * chartW;
+            }
+            function getY(val) {
+                return chartB - ((val - yMin) / yRange) * chartH;
+            }
+
+            // Coordinates
+            const sCoords = series.map((s, idx) => ({
+                x: getX(idx, allPoints.length),
+                y: getY(s.balance),
+                b: s.balance,
+                d: s.date
+            }));
+
+            const fCoords = forecast.map((f, idx) => ({
+                x: getX(series.length + idx, allPoints.length),
+                y: getY(f.balance),
+                b: f.balance,
+                d: f.date
+            }));
+
+            // SVG Paths
+            let seriesPathD = '';
+            let seriesAreaD = '';
+            if (sCoords.length > 0) {
+                seriesPathD = `M ${sCoords[0].x.toFixed(1)} ${sCoords[0].y.toFixed(1)}`;
+                sCoords.slice(1).forEach(pt => {
+                    seriesPathD += ` L ${pt.x.toFixed(1)} ${pt.y.toFixed(1)}`;
+                });
+                const lastS = sCoords[sCoords.length - 1];
+                seriesAreaD = `${seriesPathD} L ${lastS.x.toFixed(1)} ${chartB} L ${sCoords[0].x.toFixed(1)} ${chartB} Z`;
+            }
+
+            let forecastPathD = '';
+            if (fCoords.length > 0) {
+                const startPt = sCoords.length > 0 ? sCoords[sCoords.length - 1] : fCoords[0];
+                forecastPathD = `M ${startPt.x.toFixed(1)} ${startPt.y.toFixed(1)}`;
+                fCoords.forEach(pt => {
+                    forecastPathD += ` L ${pt.x.toFixed(1)} ${pt.y.toFixed(1)}`;
+                });
+            }
+
+            const todayX = sCoords.length > 0 ? sCoords[sCoords.length - 1].x : chartL;
+            const todayY = sCoords.length > 0 ? sCoords[sCoords.length - 1].y : chartB;
+            const zeroY = (0 >= yMin && 0 <= yMax) ? getY(0) : null;
+
+            const firstDate = allPoints[0].date.slice(5);
+            const todayDate = data.today ? data.today.slice(5) : '';
+            const lastDate = allPoints[allPoints.length - 1].date.slice(5);
+
+            return `
+                <div class="card">
+                    <div class="card-title">Biểu đồ tài chính & Dự báo 30 ngày</div>
+                    <div class="big-number">${fmtMoney(curBal)}</div>
+                    <div class="row-split">
+                        <div class="stat-sub">
+                            <div class="lbl">Điểm thấp nhất 30 ngày tới</div>
+                            <div class="val" style="color: ${minForecast < 0 ? 'var(--coral)' : 'var(--mint)'}">${fmtMoney(minForecast)}</div>
+                        </div>
+                        <div class="stat-sub">
+                            <div class="lbl">Tổng chi 30 ngày qua</div>
+                            <div class="val" style="color: var(--coral)">-${fmtMoney(totalExp)}</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card" style="padding: 16px 8px 12px 8px;">
+                    <div style="display: flex; justify-content: space-between; padding: 0 10px; font-size: 0.8rem; color: var(--muted); margin-bottom: 6px;">
+                        <span><span style="display: inline-block; width: 10px; height: 10px; background: var(--accent); border-radius: 50%; margin-right: 4px;"></span>Quá khứ</span>
+                        <span><span style="display: inline-block; width: 10px; height: 10px; border-bottom: 2px dashed var(--pink); margin-right: 4px;"></span>Dự báo tương lai</span>
+                    </div>
+
+                    <svg viewBox="0 0 ${w} ${h}" style="width: 100%; height: auto; display: block; overflow: visible;">
+                        <defs>
+                            <linearGradient id="chartGrad" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="0%" stop-color="var(--accent)" stop-opacity="0.35"/>
+                                <stop offset="100%" stop-color="var(--accent)" stop-opacity="0.0"/>
+                            </linearGradient>
+                        </defs>
+
+                        <!-- Grid & Zero Line -->
+                        <line x1="${chartL}" y1="${chartT}" x2="${chartR}" y2="${chartT}" stroke="rgba(255,255,255,0.07)" stroke-dasharray="2,2"/>
+                        <line x1="${chartL}" y1="${chartB}" x2="${chartR}" y2="${chartB}" stroke="rgba(255,255,255,0.07)"/>
+                        ${zeroY !== null ? `<line x1="${chartL}" y1="${zeroY.toFixed(1)}" x2="${chartR}" y2="${zeroY.toFixed(1)}" stroke="rgba(247, 118, 142, 0.4)" stroke-width="1.5" stroke-dasharray="4,3"/>` : ''}
+
+                        <!-- Axis Value Labels -->
+                        <text x="${chartL}" y="${(chartT - 8)}" fill="var(--muted)" font-size="11" font-family="sans-serif">${fmtMoney(maxVal)}</text>
+                        <text x="${chartL}" y="${(chartB + 14)}" fill="var(--muted)" font-size="11" font-family="sans-serif">${fmtMoney(minVal)}</text>
+
+                        <!-- Historical Area & Line -->
+                        ${seriesAreaD ? `<path d="${seriesAreaD}" fill="url(#chartGrad)"/>` : ''}
+                        ${seriesPathD ? `<path d="${seriesPathD}" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>` : ''}
+
+                        <!-- Forecast Line -->
+                        ${forecastPathD ? `<path d="${forecastPathD}" fill="none" stroke="var(--pink)" stroke-width="2" stroke-dasharray="4,4"/>` : ''}
+
+                        <!-- Today Marker Line & Dot -->
+                        <line x1="${todayX.toFixed(1)}" y1="${chartT}" x2="${todayX.toFixed(1)}" y2="${chartB}" stroke="rgba(196, 181, 253, 0.5)" stroke-width="1" stroke-dasharray="2,2"/>
+                        <circle cx="${todayX.toFixed(1)}" cy="${todayY.toFixed(1)}" r="4.5" fill="var(--accent)" stroke="#1e1b2e" stroke-width="2"/>
+                        <text x="${todayX.toFixed(1)}" y="${(chartB + 15)}" fill="var(--pink)" font-size="11" font-weight="bold" text-anchor="middle" font-family="sans-serif">Hôm nay</text>
+
+                        <!-- Date range labels -->
+                        <text x="${chartL}" y="${(chartB + 15)}" fill="var(--muted)" font-size="10" font-family="sans-serif">${firstDate}</text>
+                        <text x="${chartR}" y="${(chartB + 15)}" fill="var(--muted)" font-size="10" text-anchor="end" font-family="sans-serif">${lastDate}</text>
+                    </svg>
+                </div>
+            `;
+        }
+
         function renderContent() {
             const container = document.getElementById('tabContent');
             if (!state.allowed_tab_keys.includes(currentSelectedTab)) {
@@ -677,6 +837,7 @@ class ShareServer:
             else if (currentSelectedTab === 'cashflow') container.innerHTML = renderCashflow(tabData);
             else if (currentSelectedTab === 'accounts') container.innerHTML = renderAccounts(tabData);
             else if (currentSelectedTab === 'transactions') container.innerHTML = renderTransactions(tabData);
+            else if (currentSelectedTab === 'chart') container.innerHTML = renderChart(tabData);
             else container.innerHTML = `<div class="card"><div class="card-title">${state.tab_labels[currentSelectedTab] || currentSelectedTab}</div><p style="color: var(--muted);">Đang cập nhật...</p></div>`;
         }
 

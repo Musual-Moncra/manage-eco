@@ -25,3 +25,10 @@ class WebTemplateTest(unittest.TestCase):
         self.assertIn("tab-nav", content)
         self.assertIn("tab-content", content)
         self.assertIn("badge-live", content)
+
+    def test_chart_tab_rendering_support(self):
+        url = f"http://127.0.0.1:{self.port}/?pin=5678"
+        with urllib.request.urlopen(url) as resp:
+            content = resp.read().decode("utf-8")
+        self.assertIn("function renderChart", content)
+        self.assertIn("currentSelectedTab === 'chart'", content)
