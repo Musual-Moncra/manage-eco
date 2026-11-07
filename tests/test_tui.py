@@ -44,7 +44,11 @@ DASH = {"balance": 23_715_000,
         "budgets": [{"category": "ăn uống", "limit": 3_000_000, "spent": 85_000, "remaining": 2_915_000, "pct": 2.8},
                     {"category": "giải trí", "limit": 100, "spent": 120, "remaining": -20, "pct": 120.0}],
         "upcoming": [{"date": "2026-11-10", "name": "thuê nhà", "amount": -13_000_000, "balance": -500_000}],
-        "lowest": {"date": "2026-11-10", "balance": -500_000}}
+        "lowest": {"date": "2026-11-10", "balance": -500_000},
+        "accounts": [{"id": 1, "name": "Tiền mặt", "initial_balance": 1_000_000, "balance": 1_000_000, "is_default": True},
+                     {"id": 2, "name": "Techcombank", "initial_balance": 5_000_000, "balance": 5_000_000, "is_default": False}]}
+ACCOUNTS = [{"id": 1, "name": "Tiền mặt", "initial_balance": 1_000_000, "balance": 1_000_000, "is_default": True},
+            {"id": 2, "name": "Techcombank", "initial_balance": 5_000_000, "balance": 5_000_000, "is_default": False}]
 TXS = [{"id": i, "date": "2026-10-%02d" % (i % 28 + 1), "amount": 1000 * i, "kind": "expense", "category": "ăn",
         "note": "n%d" % i, "signed": -1000 * i} for i in range(1, 41)]
 PLANS = [{"id": 7, "name": "laptop", "amount": 100, "kind": "expense", "due_date": "2026-12-01",
@@ -106,10 +110,14 @@ class FakeApi:
                              "by": params["by"], "saved": 15_000_000}}
         if cmd == "goal rm":
             return {"deleted": params["id"], "goals": []}
+        if cmd == "account list":
+            return {"accounts": ACCOUNTS, "total_balance": 6_000_000}
+        if cmd == "account transfers":
+            return {"transfers": []}
         plans = PLANS + [DONE_PLAN] if params.get("all") else PLANS
         return {"dash": DASH, "list": {"transactions": TXS, "balance": 1}, "plan list": {"plans": plans},
                 "budget status": {"month": "2026-11", "budgets": DASH["budgets"]},
-                "categories": {"expense": ["ăn uống", "đi lại", "nhà"], "income": ["lương"]},
+                "categories": {"expense": ["ăn uống", "đi lại", "nhà"], "income": ["lương"], "accounts": ACCOUNTS},
                 "sound": {"sound": params.get("state", "on") != "off"},
                 "icons": {"icons": params.get("mode") or "symbol"}}.get(cmd, {})
 
@@ -151,14 +159,14 @@ class FrameTest(unittest.TestCase):
     def test_wording_dong_tien(self):
         for tab in range(4):
             tui.switch_tab(self.state, tab, self.api)
-            out = text(frame(self.state, 100))
+            out = text(frame(self.state, 120))
             self.assertNotIn("Dự định", out)
             self.assertIn("Dòng tiền", out)
         tui.dispatch(self.state, "p", self.api)
         self.assertIn("Thêm dòng tiền", text(frame(self.state)))
 
     def test_layout_rows(self):
-        out = text(frame(self.state, 100, 24)).splitlines()
+        out = text(frame(self.state, 120, 24)).splitlines()
         self.assertIn("Manage Eco", out[0])
         self.assertIn("Số dư 23.715.000 ₫", out[0])
         for name in tui.TABS:
@@ -184,7 +192,7 @@ class FrameTest(unittest.TestCase):
         for w in (80, 140):
             f = frame(self.state, w)
             tabs = sorted((x0, x1, a[1]) for r, x0, x1, a in f.hits if a[0] == "tab" and r == 1)
-            self.assertEqual([t[2] for t in tabs], [0, 1, 2, 3, 4, 5])
+            self.assertEqual([t[2] for t in tabs], list(range(len(tui.TABS))))
             self.assertTrue(all(a[1] <= b[0] for a, b in zip(tabs, tabs[1:])), "tabs overlap")
             bar = {a[1] for r, x0, x1, a in f.hits if a[0] == "key" and r == 22}
             self.assertEqual(bar, {"a", "i", "p", "s", "q"})  # Tổng quan action bar
@@ -192,7 +200,7 @@ class FrameTest(unittest.TestCase):
             self.assertTrue(all(x1 <= w for r, x0, x1, a in f.hits))
 
     def test_hit_map_list_rows(self):
-        tui.switch_tab(self.state, 1, self.api)
+        tui.switch_tab(self.state, 2, self.api)
         for w in (80, 140):
             f = frame(self.state, w)
             rows = {a[1]: r for r, x0, x1, a in f.hits if a[0] == "select"}
@@ -202,7 +210,7 @@ class FrameTest(unittest.TestCase):
             self.assertIn("40.000 ₫", f.lines[4].plain)  # newest first
 
     def test_scroll_keeps_selection_visible(self):
-        tui.switch_tab(self.state, 1, self.api)
+        tui.switch_tab(self.state, 2, self.api)
         for _ in range(30):
             tui.dispatch(self.state, ("mouse", 65, 1, 5), self.api)  # wheel down
         f = frame(self.state)
@@ -219,8 +227,8 @@ class ClickTest(unittest.TestCase):
         tui.load(self.state, self.api)
 
     def test_click_tab_and_row_and_done(self):
-        click(self.state, ("tab", 2), self.api)
-        self.assertEqual(self.state.tab, 2)
+        click(self.state, ("tab", 3), self.api)
+        self.assertEqual(self.state.tab, 3)
         self.assertNotIn(("key", "d"), [a for *_, a in frame(self.state).hits])
         click(self.state, ("select", 1), self.api)
         self.assertEqual(self.state.selected, 1)
@@ -243,7 +251,7 @@ class ClickTest(unittest.TestCase):
         click(self.state, ("key", "enter"), self.api, 140, 40)
         self.assertIsNone(self.state.form)
         self.assertEqual(self.api.made("expense"), [{"amount": 200_000, "category": "đi lại",
-                                                     "note": "xe buýt", "date": "2026-11-06"}])
+                                                     "note": "xe buýt", "date": "2026-11-06", "account": "Tiền mặt"}])
         self.assertTrue(self.state.status[1])
 
     def test_inline_errors_keep_form_open(self):
@@ -409,7 +417,7 @@ class ClickTest(unittest.TestCase):
         self.assertTrue(self.state.running)
 
     def test_delete_with_confirm(self):
-        click(self.state, ("tab", 1), self.api)
+        click(self.state, ("tab", 2), self.api)
         click(self.state, ("select", 0), self.api)
         click(self.state, ("key", "x"), self.api)
         self.assertIn("Xoá ăn", text(frame(self.state)))
@@ -507,9 +515,9 @@ class ResponsiveTest(unittest.TestCase):
 
     def test_every_screen_at_every_size(self):
         for w, h in self.SIZES:
-            for tab in range(4):
+            for tab in range(5):
                 tui.switch_tab(self.state, tab, self.api)
-                self.state.selected = 0 if tab in (1, 2) else None
+                self.state.selected = 0 if tab in (1, 2, 3, 4, 5) else None
                 self.check(w, h, (w, h, "tab", tab))
             tui.handle_key(self.state, "p", self.api)
             for key in ["tab"] * 3 + ["right"] * 3 + ["tab"] * 2:  # Lặp = Hàng tháng, focus Ngày bắt đầu
@@ -517,7 +525,7 @@ class ResponsiveTest(unittest.TestCase):
             self.assertEqual((self.state.form.values["every"], self.state.form.focus), ("monthly", "due"))
             self.check(w, h, (w, h, "plan form"))
             tui.handle_key(self.state, "esc", self.api)
-            tui.switch_tab(self.state, 1, self.api)
+            tui.switch_tab(self.state, 2, self.api)
             self.state.selected = 0
             tui.handle_key(self.state, "x", self.api)
             self.check(w, h, (w, h, "confirm"))
@@ -536,17 +544,17 @@ class ResponsiveTest(unittest.TestCase):
         out170 = text(frame(self.state, 170, 40))
         self.assertIn("Số dư 30 ngày tới", out170)
         self.assertTrue(any(c in out170 for c in "▁▂▃▄▅▆▇█"))
-        tui.switch_tab(self.state, 1, self.api)
+        tui.switch_tab(self.state, 2, self.api)
         self.assertIn("#40", text(frame(self.state, 140, 30)))
         self.assertNotIn("#40", text(frame(self.state, 80, 24)))
         self.assertIn("06/11", text(frame(self.state, 50, 20)) + "06/11")  # short dates in compact mode
-        tui.switch_tab(self.state, 2, self.api)
+        tui.switch_tab(self.state, 3, self.api)
         self.assertIn("Danh mục", text(frame(self.state, 140, 30)))
         self.assertIn("hàng tháng · ngày 5", text(frame(self.state, 80, 24)))
         self.assertNotIn("hàng tháng", text(frame(self.state, 50, 20)))
 
     def test_lists_use_spare_rows(self):
-        tui.switch_tab(self.state, 1, self.api)
+        tui.switch_tab(self.state, 2, self.api)
         for h in (12, 24, 45):
             rows = [a for _, _, _, a in frame(self.state, 100, h).hits if a[0] == "select"]
             self.assertEqual(len(rows), min(40, h - 6))
@@ -723,7 +731,7 @@ class AnimationTest(unittest.TestCase):
 
     def test_bar_fill_on_tab_switch(self):
         self.state.now = 500.0
-        tui.switch_tab(self.state, 3, self.api)
+        tui.switch_tab(self.state, 4, self.api)
         early = text(self.at(500.05)).count("█")
         late = text(self.at(501.0)).count("█")
         self.assertLess(early, late)
@@ -752,7 +760,7 @@ class EditTest(unittest.TestCase):
             tui.dispatch(self.state, ch, self.api)
 
     def test_button_only_with_a_selection(self):
-        click(self.state, ("tab", 1), self.api)
+        click(self.state, ("tab", 2), self.api)
         self.assertNotIn(("key", "e"), [a for *_, a in frame(self.state).hits])
         tui.dispatch(self.state, "e", self.api)
         self.assertIsNone(self.state.form)
@@ -762,11 +770,11 @@ class EditTest(unittest.TestCase):
         self.assertNotIn(("key", "e"), [a for *_, a in frame(self.state).hits])
 
     def test_prefill_and_save_transaction_by_clicks(self):
-        click(self.state, ("tab", 1), self.api)
+        click(self.state, ("tab", 2), self.api)
         click(self.state, ("select", 0), self.api)  # newest first: #40
         click(self.state, ("key", "e"), self.api)
         form = self.state.form
-        self.assertEqual(form.values, {"amount": "40.000", "category": "ăn", "note": "n40", "date": "13/10/2026",
+        self.assertEqual(form.values, {"amount": "40.000", "category": "ăn", "account": "", "note": "n40", "date": "13/10/2026",
                                        "kind": "expense"})
         self.assertIn("Sửa giao dịch #40", text(frame(self.state)))
         click(self.state, ("chip", "kind", "income"), self.api)
@@ -780,7 +788,7 @@ class EditTest(unittest.TestCase):
         tui.sfx.play.assert_called_with("warn", enabled=True)  # save sound (FakeApi forecast is negative)
 
     def test_edit_by_keys_keeps_values(self):
-        for key in ("2", "j", "j", "e"):
+        for key in ("3", "j", "j", "e"):
             tui.dispatch(self.state, key, self.api)
         self.assertEqual(self.state.form.title, "Sửa giao dịch #39")
         tui.dispatch(self.state, "enter", self.api)
@@ -788,14 +796,14 @@ class EditTest(unittest.TestCase):
                                                   "date": "2026-10-12", "kind": "expense"}])
 
     def test_note_can_be_cleared(self):
-        for key in ("2", "j", "e"):
+        for key in ("3", "j", "e"):
             tui.dispatch(self.state, key, self.api)
         self.retype("note", "")
         tui.dispatch(self.state, "enter", self.api)
         self.assertEqual(self.api.made("edit")[0]["note"], "")
 
     def test_double_click_opens_edit(self):
-        click(self.state, ("tab", 1), self.api)
+        click(self.state, ("tab", 2), self.api)
         self.state.now = 10.0
         click(self.state, ("select", 2), self.api)
         self.state.now = 11.0  # too slow: just a second selection
@@ -806,7 +814,7 @@ class EditTest(unittest.TestCase):
         self.assertEqual(self.state.form.edit_id, 38)
 
     def test_plan_edit_prefill_and_new_day(self):
-        click(self.state, ("tab", 2), self.api)
+        click(self.state, ("tab", 3), self.api)
         click(self.state, ("select", 1), self.api)
         click(self.state, ("key", "e"), self.api)
         form = self.state.form
@@ -821,7 +829,7 @@ class EditTest(unittest.TestCase):
         self.assertIn("Đã sửa dòng tiền", self.state.status[0])
 
     def test_plan_edit_to_once_drops_day(self):
-        for key in ("3", "j", "j", "e"):
+        for key in ("4", "j", "j", "e"):
             tui.dispatch(self.state, key, self.api)
         click(self.state, ("chip", "every", "once"), self.api, 100, 40)
         tui.dispatch(self.state, "enter", self.api)
@@ -831,7 +839,7 @@ class EditTest(unittest.TestCase):
 
     def test_edit_api_error_keeps_form(self):
         self.api.fail = LookupError("không tìm thấy giao dịch #40")
-        for key in ("2", "j", "e", "enter"):
+        for key in ("3", "j", "e", "enter"):
             tui.dispatch(self.state, key, self.api)
         self.assertIsNotNone(self.state.form)
         self.assertIn("không tìm thấy giao dịch #40", text(frame(self.state)))
@@ -960,10 +968,10 @@ class PixelPopupTest(unittest.TestCase):
 
     def test_popups_for_each_event(self):
         self.save()
-        tui.dispatch(self.state, "3", self.api)  # keys dismiss the popup and still act
+        tui.dispatch(self.state, "4", self.api)  # keys dismiss the popup and still act
         tui.dispatch(self.state, "j", self.api)
         tui.dispatch(self.state, "d", self.api)
-        tui.dispatch(self.state, "2", self.api)
+        tui.dispatch(self.state, "3", self.api)
         tui.dispatch(self.state, "j", self.api)
         tui.dispatch(self.state, "e", self.api)
         tui.dispatch(self.state, "enter", self.api)
@@ -1088,7 +1096,7 @@ class UiOnlyTest(unittest.TestCase):
         return {a[1] for r, x0, x1, a in frame(self.state, w, h).hits if a[0] == "key" and r == h - 2}
 
     def test_budget_add_edit_delete_by_clicks(self):
-        click(self.state, ("tab", 3), self.api)
+        click(self.state, ("tab", 4), self.api)
         self.assertIn("b", self.keys_on_bar())
         click(self.state, ("key", "b"), self.api, 100, 30)
         self.assertEqual(self.state.form.name, "budget")
@@ -1113,7 +1121,7 @@ class UiOnlyTest(unittest.TestCase):
         self.assertIn("Đã xoá ngân sách giải trí", self.state.status[0])
 
     def test_budget_month_nav(self):
-        click(self.state, ("tab", 3), self.api)
+        click(self.state, ("tab", 4), self.api)
         self.assertIn("Tháng 11/2026", text(frame(self.state)))
         click(self.state, ("month", "budget", -1), self.api)
         click(self.state, ("month", "budget", -1), self.api)
@@ -1125,7 +1133,7 @@ class UiOnlyTest(unittest.TestCase):
         self.assertEqual(self.api.made("budget status")[-1], {"month": "2026-11"})
 
     def test_transactions_month_nav_and_all(self):
-        click(self.state, ("tab", 1), self.api)
+        click(self.state, ("tab", 2), self.api)
         self.assertIn("Mọi tháng", text(frame(self.state)))
         click(self.state, ("month", "tx", -1), self.api)
         self.assertEqual(self.api.made("list")[-1], {"month": "2026-11"})
@@ -1135,7 +1143,7 @@ class UiOnlyTest(unittest.TestCase):
         self.assertEqual(self.api.made("list")[-1], {"all": True})
 
     def test_plan_filter_and_cancel_by_click(self):
-        click(self.state, ("tab", 2), self.api)
+        click(self.state, ("tab", 3), self.api)
         click(self.state, ("plans", True), self.api)
         self.assertEqual(self.api.made("plan list")[-1], {"all": True})
         out = text(frame(self.state))
@@ -1193,9 +1201,9 @@ class UiOnlyTest(unittest.TestCase):
         self.assertIn("20%", out)
 
     def test_savings_jars_tab_and_take_form(self):
-        # Switch to Hũ tiết kiệm (tab 4, key '5')
-        tui.switch_tab(self.state, 4, self.api)
-        self.assertEqual(self.state.tab, 4)
+        # Switch to Hũ tiết kiệm (tab 5, key '6')
+        tui.switch_tab(self.state, 5, self.api)
+        self.assertEqual(self.state.tab, 5)
         out = text(frame(self.state, 100, 30))
         self.assertIn("Hũ tiết kiệm", out)
         self.assertIn("Tiền tự do", out)
@@ -1214,9 +1222,9 @@ class UiOnlyTest(unittest.TestCase):
         self.assertEqual(self.api.made("goal take"), [{"id": 1, "amount": 1_000_000}])
 
     def test_chart_milestones_and_quick_jump(self):
-        # Switch to Biểu đồ (tab 5, key '6')
-        tui.switch_tab(self.state, 5, self.api)
-        self.assertEqual(self.state.tab, 5)
+        # Switch to Biểu đồ (tab 6, key '7')
+        tui.switch_tab(self.state, 6, self.api)
+        self.assertEqual(self.state.tab, 6)
         out = text(frame(self.state, 100, 30))
         # Milestone chips exist on chart
         self.assertIn("Hôm nay", out)
@@ -1237,12 +1245,12 @@ class UiOnlyTest(unittest.TestCase):
         self.assertEqual(self.state.chart["cursor"], target_idx)
         tui.dispatch(self.state, "0", self.api)
         # 0 or Home jumps to today's index in series
-        n_hist = len((self.state.data.get(5) or {}).get("series") or [])
+        n_hist = len((self.state.data.get(6) or {}).get("series") or [])
         self.assertEqual(self.state.chart["cursor"], max(0, n_hist - 1))
 
     def test_every_size_still_exact(self):
         for w, h in ((40, 12), (50, 20), (80, 24), (170, 45)):
-            for tab in range(6):
+            for tab in range(len(tui.TABS)):
                 tui.switch_tab(self.state, tab, self.api)
                 f = frame(self.state, w, h)
                 self.assertEqual(len(f.lines), h)
@@ -1258,10 +1266,10 @@ class ChartTabTest(unittest.TestCase):
         self.api = FakeApi()
         self.state = tui.State(TODAY)
         tui.init(self.state, self.api)
-        tui.dispatch(self.state, "6", self.api)
+        tui.dispatch(self.state, "7", self.api)
 
     def test_loads_history_and_fills_rows(self):
-        self.assertEqual(self.state.tab, 5)
+        self.assertEqual(self.state.tab, 6)
         self.assertEqual(self.api.made("history")[-1], {"days": 90, "ahead": 30})
         for w, h in ((50, 20), (100, 30), (160, 45)):
             f = frame(self.state, w, h)
@@ -1311,10 +1319,10 @@ class ChartTabTest(unittest.TestCase):
 
     def test_overview_sparkline_opens_chart(self):
         tui.dispatch(self.state, "1", self.api)
-        click(self.state, ("tab", 5), self.api, 170, 40)  # the tab itself
+        click(self.state, ("tab", 6), self.api, 170, 40)  # the tab itself
         tui.dispatch(self.state, "1", self.api)
         f = frame(self.state, 170, 40)
-        spark = [r for r, x0, x1, a in f.hits if a == ("tab", 5) and r > 1]
+        spark = [r for r, x0, x1, a in f.hits if a == ("tab", 6) and r > 1]
         self.assertTrue(spark)  # the 30-day sparkline row links to Biểu đồ
 
 
@@ -1362,15 +1370,15 @@ class VfxTest(unittest.TestCase):
         self.assertTrue(all(t is None for t in timeouts), timeouts)  # nothing animates on a click
 
     def test_tab_underline_slides(self):
-        f = frame(self.state, 100, 30)
+        f = frame(self.state, 120, 30)
         spans = {a[1]: (x0, x1) for r, x0, x1, a in f.hits if r == 1 and a[0] == "tab"}
-        click(self.state, ("tab", 3), self.api, 100, 30)
+        click(self.state, ("tab", 3), self.api, 120, 30)
         self.assertEqual(self.state.slide[:2], (0, 3))
 
         def underline_start():
-            line = frame(self.state, 100, 30).lines[1]
+            line = frame(self.state, 120, 30).lines[1]
             idx = tui._cell_index(line)
-            return next(col for col in range(100) if any(
+            return next(col for col in range(120) if any(
                 "underline" in str(sp.style) and sp.start <= idx[col] < sp.end for sp in line.spans))
         self.state.now = 110.05
         mid = underline_start()
@@ -1433,10 +1441,10 @@ class SoundTest(unittest.TestCase):
         return [c.args[0] for c in tui.sfx.play.call_args_list if c.args[0] != "click"]
 
     def test_events(self):
-        click(self.state, ("tab", 2), self.api)
+        click(self.state, ("tab", 3), self.api)
         click(self.state, ("select", 0), self.api)
         click(self.state, ("key", "d"), self.api)
-        click(self.state, ("tab", 1), self.api)
+        click(self.state, ("tab", 2), self.api)
         click(self.state, ("select", 0), self.api)
         click(self.state, ("key", "x"), self.api)
         click(self.state, ("key", "y"), self.api)
@@ -1470,7 +1478,7 @@ class SoundTest(unittest.TestCase):
         self.assertEqual(self.api.made("sound")[-1], {"state": "off"})
         self.assertFalse(self.state.sound)
         self.assertIn("♪ tắt", text(frame(self.state)))
-        click(self.state, ("tab", 3), self.api)
+        click(self.state, ("tab", 4), self.api)
         tui.sfx.play.assert_called_with("tab", enabled=False)
         tui.dispatch(self.state, "m", self.api)
         self.assertEqual(self.api.made("sound")[-1], {"state": "on"})
@@ -1508,19 +1516,19 @@ class RealApiTest(unittest.TestCase):
         self.assertTrue(state.status[1], state.status)
         self.assertEqual(state.balance, 2_000_000)
         self.assertIn("Sẽ âm tiền", text(frame(state)))
-        click(state, ("tab", 2), call)
+        click(state, ("tab", 3), call)
         self.assertIn("hàng tháng · ngày 10", text(frame(state)))
         self.assertIn("10/11/2026", text(frame(state)))
         click(state, ("select", 0), call)
         click(state, ("key", "d"), call)
         self.assertEqual(state.balance, -1_000_000)
-        click(state, ("tab", 1), call)
+        click(state, ("tab", 2), call)
         click(state, ("select", 0), call)
         click(state, ("key", "x"), call)
         click(state, ("key", "y"), call)
         self.assertEqual(store.balance(TODAY), 2_000_000)
         for w, h in ((80, 24), (140, 40)):
-            for tab in range(4):
+            for tab in range(len(tui.TABS)):
                 tui.switch_tab(state, tab, call)
                 self.assertEqual(len(frame(state, w, h).lines), h)
         store.close()

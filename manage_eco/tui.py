@@ -74,13 +74,13 @@ _PLAIN_FACES = {"success": "\\(^o^)/", "error": "(T_T)", "info": "(^_^)"}
 # icons: emoji = v5 set; symbol (default) = single-width BMP glyphs found in Menlo / SF Mono / DejaVu, no emoji;
 # off = no icons. "w" = cells reserved for a category icon. "toast" = faces passed to anim (None: anim's own).
 ICON_SETS = {
-    "emoji": {"tabs": ["🏠", "💸", "🔁", "🎯", "🏺", "📈"], "settings": "⚙", "cancel": "⊘", "happy": "(◕‿◕)", "worried": "(・_・;)", "sad": "(｡•́︿•̀｡)",
+    "emoji": {"tabs": ["🏠", "🏦", "💸", "🔁", "🎯", "🏺", "📈"], "settings": "⚙", "cancel": "⊘", "happy": "(◕‿◕)", "worried": "(・_・;)", "sad": "(｡•́︿•̀｡)",
               "sound_on": "🔊", "sound_off": "🔇", "warn": "⚠", "late": "⏰", "edit": "✎", "w": 2, "toast": None,
               "popup": "emoji"},
-    "symbol": {"tabs": ["⌂", "⇄", "↻", "◎", "◈", "⌁"], "settings": "⚙", "cancel": "⊘", "happy": "(^_^)", "worried": "(o_o;)", "sad": "(T_T)",
+    "symbol": {"tabs": ["⌂", "⌸", "⇄", "↻", "◎", "◈", "⌁"], "settings": "⚙", "cancel": "⊘", "happy": "(^_^)", "worried": "(o_o;)", "sad": "(T_T)",
                "sound_on": "♪ bật", "sound_off": "♪ tắt", "warn": "▲", "late": "»", "edit": "✎", "w": 1,
                "toast": _PLAIN_FACES, "popup": "symbol"},
-    "off": {"tabs": ["", "", "", "", "", ""], "settings": "", "cancel": "", "happy": "(^_^)", "worried": "(o_o;)", "sad": "(T_T)",
+    "off": {"tabs": ["", "", "", "", "", "", ""], "settings": "", "cancel": "", "happy": "(^_^)", "worried": "(o_o;)", "sad": "(T_T)",
             "sound_on": "Âm: bật", "sound_off": "Âm: tắt", "warn": "!", "late": "!", "edit": "", "w": 0,
             "toast": _PLAIN_FACES, "popup": "symbol"},
 }
@@ -91,8 +91,8 @@ ASCII = False
 ICON_MODE = "symbol"
 G = dict(UNICODE_GLYPHS, **ICON_SETS["symbol"])  # current glyphs; see set_style()
 
-TABS = ["Tổng quan", "Giao dịch", "Dòng tiền", "Ngân sách", "Hũ tiết kiệm", "Biểu đồ"]
-TABS_SHORT = ["Tổng", "Giao", "Dòng", "Ngân", "Hũ", "Biểu"]
+TABS = ["Tổng quan", "Tài khoản", "Giao dịch", "Dòng tiền", "Ngân sách", "Hũ tiết kiệm", "Biểu đồ"]
+TABS_SHORT = ["Tổng", "Tài", "Giao", "Dòng", "Ngân", "Hũ", "Biểu"]
 CHART_RANGES = [("30", "1T"), ("90", "3T"), ("180", "6T"), ("365", "1N"), ("0", "Tất cả")]
 CHART_AHEAD = [("0", "+0"), ("30", "+30"), ("90", "+90")]
 CHART_MODES = [("line", "Line"), ("candle", "Nến")]
@@ -153,12 +153,25 @@ class Field(NamedTuple):
 
 _AMOUNT = Field("amount", "Số tiền", placeholder="vd: 50k, 1.5tr, 50k+20k, 3x150k")
 _CATEGORY = Field("category", "Danh mục", placeholder="chọn bên dưới hoặc gõ")
-_TX_FIELDS = [_AMOUNT, _CATEGORY, Field("note", "Ghi chú", placeholder="(không bắt buộc)"),
+_ACCOUNT = Field("account", "Tài khoản", placeholder="chọn ví bên dưới (mặc định: ví chính)")
+_TX_FIELDS = [_AMOUNT, _CATEGORY, _ACCOUNT, Field("note", "Ghi chú", placeholder="(không bắt buộc)"),
               Field("date", "Ngày", placeholder="hôm nay")]
+DEFAULT_CHOICES = [("0", "Không"), ("1", "Mặc định")]
 FORMS = {
     "expense": ("Thêm khoản chi", _TX_FIELDS),
     "income": ("Thêm khoản thu", _TX_FIELDS),
     "tx": ("Sửa giao dịch", _TX_FIELDS + [Field("kind", "Loại", KINDS)]),
+    "account_add": ("Thêm tài khoản", [Field("name", "Tên tài khoản", placeholder="vd: Tiền mặt, ZaloPay, MB Bank"),
+                                       Field("initial_balance", "Số dư ban đầu", placeholder="vd: 0, 1tr, 500k"),
+                                       Field("default", "Đặt mặc định", DEFAULT_CHOICES)]),
+    "account_edit": ("Sửa tài khoản", [Field("name", "Tên tài khoản"),
+                                        Field("initial_balance", "Số dư ban đầu"),
+                                        Field("default", "Đặt mặc định", DEFAULT_CHOICES)]),
+    "account_transfer": ("Chuyển tiền nội bộ", [Field("from", "Từ tài khoản", placeholder="tên tài khoản gửi"),
+                                                Field("to", "Đến tài khoản", placeholder="tên tài khoản nhận"),
+                                                _AMOUNT,
+                                                Field("date", "Ngày", placeholder="hôm nay"),
+                                                Field("note", "Ghi chú", placeholder="(không bắt buộc)")]),
     "budget": ("Thêm ngân sách", [_CATEGORY, Field("amount", "Hạn mức / tháng", placeholder="vd: 3tr, 100k x 30")]),
     "budget_edit": ("Sửa ngân sách", [Field("amount", "Hạn mức / tháng", placeholder="vd: 3tr, 100k x 30")]),
     "goal": ("Mục tiêu tiết kiệm", [Field("amount", "Số tiền mục tiêu", placeholder="vd: 50tr"),
@@ -364,6 +377,9 @@ class Form:
                     "goal_save": AMOUNT_CHIPS, "goal_take": AMOUNT_CHIPS}.get(self.name, AMOUNT_CHIPS)
         if f.key == "category":
             return [(c, c) for c in list(self.cats.get(self.kind(), []))[:8]]
+        if f.key in ("account", "from", "to"):
+            acc_list = self.cats.get("accounts", [])
+            return [(a.get("name", str(a)), a.get("name", str(a))) for a in acc_list]
         if f.key == "day":
             return DAY_CHIPS
         if f.key == "by":
@@ -421,7 +437,7 @@ class State:
 
     def items(self) -> List[Dict[str, Any]]:
         d = self.data.get(self.tab, {})
-        key = {1: "transactions", 2: "plans", 3: "budgets", 4: "goals"}.get(self.tab)
+        key = {1: "accounts", 2: "transactions", 3: "plans", 4: "budgets", 5: "goals"}.get(self.tab)
         return (d.get(key) or []) if key else []
 
     def set_status(self, msg: str, ok: bool = True) -> None:
@@ -461,14 +477,16 @@ def shift_month(month: str, step: int) -> str:
 def tab_request(state: State, tab: int) -> Tuple[str, Dict[str, Any]]:
     """The api call behind each tab, from the view settings (month, filter, chart range)."""
     if tab == 1:
-        return "list", ({"month": state.tx_month} if state.tx_month else {"all": True})
+        return "account list", {}
     if tab == 2:
-        return "plan list", {"all": state.plans_all}
+        return "list", ({"month": state.tx_month} if state.tx_month else {"all": True})
     if tab == 3:
-        return "budget status", ({"month": state.budget_month} if state.budget_month else {})
+        return "plan list", {"all": state.plans_all}
     if tab == 4:
-        return "goal list", {}
+        return "budget status", ({"month": state.budget_month} if state.budget_month else {})
     if tab == 5:
+        return "goal list", {}
+    if tab == 6:
         return "history", {"days": state.chart["days"], "ahead": state.chart["ahead"]}
     return "dash", {}
 
@@ -484,8 +502,14 @@ def load(state: State, api: ApiCall) -> None:
         state.set_status("Lỗi tải dữ liệu: %s" % e, False)
         data = {}
     if state.tab == 1:
+        try:
+            trs_data = api("account transfers", {})
+            data["transfers"] = trs_data.get("transfers", [])
+        except Exception:
+            data["transfers"] = []
+    if state.tab == 2:
         data = dict(data, transactions=list(reversed(data.get("transactions") or [])))  # newest first
-    if state.tab in (0, 4) and data:
+    if state.tab in (0, 5) and data:
         if state.tab == 0:
             state.dash = data
         state.goals = data.get("goals") or []
@@ -742,6 +766,7 @@ def tabs_line(active: int, width: int) -> Line:
     digits = [str(i + 1) for i in range(n)]
     return fit([make(TABS, True, True),
                 make(active_full, True, True),
+                make(active_full, True, True, compact_pad=True),
                 make(TABS_SHORT, True, True),
                 make(TABS_SHORT, True, False),
                 make(icon_only, True, True),
@@ -760,26 +785,31 @@ def action_line(state: State, width: int) -> Line:
     elif state.settings:
         buttons = [("Đóng", "Đóng", "esc", "Esc", True)]
     else:
-        buttons = {1: [("+ Chi", "+Chi", "a", "a", False), ("+ Thu", "+Thu", "i", "i", False)],
-                   2: [("+ Dòng tiền", "+Dòng", "p", "p", False)],
-                   3: [("+ Ngân sách", "+NS", "b", "b", False)],
-                   4: [("+ Tạo hũ", "+Hũ", "goal_add", "+Hũ", False)]}.get(
+        buttons = {1: [("+ Thêm", "+Thêm", "a", "a", False), ("⇄ Chuyển", "Chuyển", "t", "t", False)],
+                   2: [("+ Chi", "+Chi", "a", "a", False), ("+ Thu", "+Thu", "i", "i", False)],
+                   3: [("+ Dòng tiền", "+Dòng", "p", "p", False)],
+                   4: [("+ Ngân sách", "+NS", "b", "b", False)],
+                   5: [("+ Tạo hũ", "+Hũ", "goal_add", "+Hũ", False)]}.get(
             state.tab, [("+ Chi", "+Chi", "a", "a", False), ("+ Thu", "+Thu", "i", "i", False),
                         ("+ Dòng tiền", "+Dòng", "p", "p", False)])
         item = selected_item(state)
         if item is not None:
             pending = item.get("status", "pending") == "pending"
-            if state.tab == 4:
+            if state.tab == 1:
+                buttons.append((("%s Sửa" % G["edit"]).strip(), G["edit"] or "Sửa", "e", "e", False))
+                buttons.append(("★ Mặc định", "Mặc định", "d", "d", False))
+                buttons.append(("%s Xoá" % G["del"], G["del"], "x", "x", False))
+            elif state.tab == 5:
                 buttons.append(("+ Góp", "+G", "goal_save:%d" % item["id"], "+G", False))
                 buttons.append(("- Rút", "-R", "goal_take:%d" % item["id"], "-R", False))
                 buttons.append((("%s Sửa" % G["edit"]).strip(), G["edit"] or "Sửa", "e", "e", False))
                 buttons.append(("%s Xoá" % G["del"], G["del"], "x", "x", False))
-            elif state.tab in (1, 3) or pending:
+            elif state.tab in (2, 4) or pending:
                 buttons.append((("%s Sửa" % G["edit"]).strip(), G["edit"] or "Sửa", "e", "e", False))
-            if state.tab == 2 and pending:
+            if state.tab == 3 and pending:
                 buttons.append(("%s Xong" % G["done"], G["done"], "d", "d", False))
                 buttons.append((("%s Huỷ" % G["cancel"]).strip(), G["cancel"] or "Huỷ", "c", "c", False))
-            if state.tab in (1, 3):
+            if state.tab in (2, 4):
                 buttons.append(("%s Xoá" % G["del"], G["del"], "x", "x", False))
         gear = ("%s Cài đặt" % G["settings"]).strip()
         buttons += [(gear, G["settings"] or "Cài đặt", "s", "s", False), ("Thoát", "Thoát", "q", "q", False)]
@@ -817,7 +847,7 @@ def budget_section(state: State, budgets: List[Dict[str, Any]], width: int, rows
     for b in sorted(budgets, key=lambda b: -float(b.get("pct", 0)))[:rows]:
         pct = float(b.get("pct", 0))
         spent, limit = b.get("spent", 0), b.get("limit", 0)
-        ln = Line(("tab", 3)).add("   ").cell(cat_label(b["category"]), cat_w).add(" ")
+        ln = Line(("tab", 4)).add("   ").cell(cat_label(b["category"]), cat_w).add(" ")
         ln.text.append_text(_bar(pct, bar_w, state.bar_pct(pct)))
         ln.cell("%d%%" % round(pct), 6, right=True).add("  ")
         amounts = ("%s / %s" % (money(spent), money(limit))) if full else \
@@ -835,7 +865,7 @@ def upcoming_section(rows_data: List[Dict[str, Any]], width: int, rows: int) -> 
     name_w = max(6, width - 3 - 5 - 2 - 2 - 15 - (19 if with_balance else 0))
     for r in rows_data[:rows]:
         amt, c = _signed(r["amount"])
-        ln = (Line(("tab", 2)).add("   ").cell(_vi_date(r["date"], short=True), 5, MUTED).add("  ")
+        ln = (Line(("tab", 3)).add("   ").cell(_vi_date(r["date"], short=True), 5, MUTED).add("  ")
               .cell(r["name"], name_w).add("  ").cell(amt, 15, c, right=True))
         if with_balance:
             ln.add(" %s " % G["arrow"], MUTED).cell(money(r["balance"]), 15,
@@ -862,7 +892,7 @@ def sparkline_lines(d: Dict[str, Any], today: date, width: int) -> List[Line]:
     lo, hi = min(series), max(series)
     ticks = G["spark"]
     k = max(1, min(3, (width - 34) // len(series)))
-    ln = Line(("tab", 5)).add("   ")  # opens the Biểu đồ tab
+    ln = Line(("tab", 6)).add("   ")  # opens the Biểu đồ tab
     for v in series:
         level = 0 if hi == lo else int((v - lo) / (hi - lo) * (len(ticks) - 1))
         ln.add(ticks[level] * k, EXPENSE_C if v < 0 else INCOME_C)
@@ -884,7 +914,7 @@ def category_section(m: Dict[str, Any], width: int, rows: int) -> List[Line]:
     for c in cats[:rows]:
         pct = c["amount"] * 100.0 / total
         filled = int(round(pct / 100 * bar_w))
-        ln = Line(("tab", 1)).add("   ").cell(cat_label(c["category"]), cat_w).add(" ")
+        ln = Line(("tab", 2)).add("   ").cell(cat_label(c["category"]), cat_w).add(" ")
         ln.text.append_text(Text.assemble((G["full"] * filled, PINK), (G["empty"] * (bar_w - filled), RULE_C)))
         ln.cell("%d%%" % round(pct), 6, right=True).add("  ")
         ln.cell(money(c["amount"]) if full else short_money(c["amount"]), money_w, right=True)
@@ -917,7 +947,7 @@ def goal_lines(state: State, width: int) -> List[Line]:
     hdr = Line().add("   Tiền tự do: ", MUTED).add(money(free_bal) if full else short_money(free_bal), "bold " + INCOME_C)
     if total_saved > 0:
         hdr.add(" · Đã góp: ", MUTED).add(money(total_saved) if full else short_money(total_saved), ACCENT)
-    hdr.add("   ").click("Xem hũ →", ("tab", 4), BTN).add(" ").button("+ Mục tiêu", "goal_add", "+MT", short="+")
+    hdr.add("   ").click("Xem hũ →", ("tab", 5), BTN).add(" ").button("+ Mục tiêu", "goal_add", "+MT", short="+")
     lines.append(hdr)
 
     name_w = 28 if width >= 150 else 20 if width >= 115 else 14 if width >= 80 else 10
@@ -971,6 +1001,10 @@ def overview_lines(state: State, d: Dict[str, Any], width: int, height: int) -> 
         out.append(Line().add("   " + label, MUTED))
         for name, v, c in (("Thu", inc, INCOME_C), ("Chi", exp, EXPENSE_C), ("Còn lại", net, net_c)):
             out.append(Line().add("   ").cell(name, 10, MUTED).add(money(v), "bold " + c))
+    accs = d.get("accounts") or []
+    if accs:
+        acc_parts = ["%s: %s" % (a["name"], short_money(a["balance"])) for a in accs[:4]]
+        out.append(Line(("tab", 1)).add("   Ví / Tài khoản: ", MUTED).add("  │  ".join(acc_parts), ACCENT))
     out.append(_rule(width))
 
     tail = []  # type: List[Line]
@@ -980,12 +1014,12 @@ def overview_lines(state: State, d: Dict[str, Any], width: int, height: int) -> 
             warn = " %s Sẽ âm tiền ngày %s (thấp nhất %s)" % (G["warn"], _vi_date(low["date"]), money(low["balance"]))
         else:
             warn = " %s Âm tiền %s: %s" % (G["warn"], _vi_date(low["date"], short=True), short_money(low["balance"]))
-        tail.append(Line(("tab", 2)).add(fit_money(warn, width), "bold " + EXPENSE_C))
+        tail.append(Line(("tab", 3)).add(fit_money(warn, width), "bold " + EXPENSE_C))
     else:
         tail.append(Line().add(" %s Số dư không bị âm trong 90 ngày tới." % G["ok"], INCOME_C))
     overdue = d.get("overdue") or []
     if overdue:
-        tail.append(Line(("tab", 2)).add(fit_money(" %s Quá hạn: %s" % (G["late"], ", ".join(p["name"] for p in overdue)),
+        tail.append(Line(("tab", 3)).add(fit_money(" %s Quá hạn: %s" % (G["late"], ", ".join(p["name"] for p in overdue)),
                                                    width),
                                          WARN_C))
     for gl in reversed(goal_lines(state, width)):
@@ -1160,7 +1194,8 @@ def goal_tab_lines(state: State, width: int, height: int) -> List[Line]:
         hdr.add("Dư: ", MUTED).add(short_money(bal), "bold").add(" · Hũ: ", MUTED)
         hdr.add(short_money(total_saved), ACCENT).add(" · Tự do: ", MUTED)
         hdr.add(short_money(free_bal), "bold " + INCOME_C).add(" ")
-    hdr.button("+ Tạo hũ", "goal_add", "+Hũ", short="+Hũ")
+    if width >= 55:
+        hdr.button("+ Tạo hũ", "goal_add", "+Hũ", short="+Hũ")
 
     name_w = 30 if vwide else 24 if wide else 18 if full else 12
     money_w = 30 if full else 11
@@ -1233,7 +1268,7 @@ def chart_chip_lines(state: State, width: int) -> List[Line]:
 
 def get_chart_milestones(state: State) -> List[Tuple[str, str, str, int, Optional[str]]]:
     """Return list of (wide_label, full_label, short_label, data_index, diff_str) for chart milestones."""
-    d = state.data.get(5) or {}
+    d = state.data.get(6) or {}
     series = d.get("series") or []
     forecast = d.get("forecast") or []
     all_pts = series + forecast
@@ -1315,7 +1350,7 @@ def chart_milestone_lines(state: State, width: int, max_lines: int = 1) -> List[
 
 
 def _chart_count(state: State) -> int:
-    d = state.data.get(5) or {}
+    d = state.data.get(6) or {}
     if state.chart["mode"] == "candle" and chart_mod is not None and hasattr(chart_mod, "ohlc"):
         try:
             return len(chart_mod.ohlc(d.get("series") or [], state.chart["bucket"]))
@@ -1331,7 +1366,7 @@ def chart_lines(state: State, width: int, height: int) -> List[Line]:
     max_ms = 1 if room < 8 or width < 60 else 2
     ms = chart_milestone_lines(state, width, max_lines=max_ms) if room >= 1 else []
     out = chips + ms
-    d = state.data.get(5) or {}
+    d = state.data.get(6) or {}
     series, forecast = d.get("series") or [], d.get("forecast") or []
     plot_h = max(3, height - len(out))
     c, cur = state.chart, state.chart["cursor"]
@@ -1489,6 +1524,75 @@ def form_lines(form: Form, width: int) -> Tuple[List[Line], Tuple[int, int]]:
     return out, focus_rows
 
 
+def accounts_lines(state: State, width: int, height: int) -> List[Line]:
+    d = state.data.get(1) or {}
+    accs = d.get("accounts") or []
+    tot = d.get("total_balance") or 0
+    full = width >= 90
+    wide = width >= 120
+
+    hdr = Line().add(" ")
+    if width >= 80:
+        hdr.add("Tổng tài sản: ", MUTED).add(money(tot), "bold " + INCOME_C).add("  │  Số tài khoản: ", MUTED)
+        hdr.add("%d ví/tài khoản" % len(accs), ACCENT).add("   ")
+    else:
+        hdr.add("Tổng: ", MUTED).add(short_money(tot), "bold " + INCOME_C).add(" · %d ví" % len(accs), ACCENT).add(" ")
+    if width >= 95:
+        hdr.button("+ Thêm", "a", "a", short="+")
+        hdr.button("⇄ Chuyển", "t", "t", short="⇄")
+
+    name_w = 24 if wide else 18 if full else 14
+    bal_w = 18 if full else 12
+    init_w = 16 if wide else 12 if full else 0
+    pct_w = 6
+    bar_w = max(4, min(30 if wide else 20, width - 1 - name_w - 2 - bal_w - (init_w + 2 if init_w else 0) - pct_w - 12))
+
+    head = Line().add(" ").cell("Tài khoản", name_w, MUTED).add("  ")
+    head.cell("Số dư hiện tại", bal_w, MUTED, right=True).add("  ")
+    if init_w:
+        head.cell("Số dư đầu", init_w, MUTED, right=True).add("  ")
+    head.cell("Tỷ lệ", bar_w + pct_w + 2, MUTED).add("  ")
+    head.cell("Mặc định", 10, MUTED)
+
+    def row(a: Dict[str, Any]) -> Line:
+        pct = float(a.get("pct", 0.0))
+        bal = a.get("balance", 0)
+        bal_c = INCOME_C if bal > 0 else (WARN_C if bal == 0 else EXPENSE_C)
+        init_bal = a.get("initial_balance", 0)
+        is_def = bool(a.get("is_default", False))
+
+        ln = Line().add(" ").cell(a.get("name", "Ví"), name_w, "bold").add("  ")
+        ln.cell(money(bal) if full else short_money(bal), bal_w, "bold " + bal_c, right=True).add("  ")
+        if init_w:
+            ln.cell(money(init_bal) if full else short_money(init_bal), init_w, MUTED, right=True).add("  ")
+        ln.text.append_text(_bar(pct, bar_w, state.bar_pct(pct)))
+        ln.cell(" %2.0f%%" % pct, pct_w, right=True).add("  ")
+        if is_def:
+            ln.cell("[Mặc định]", 10, "bold " + ACCENT)
+        else:
+            ln.cell("", 10)
+        return ln
+
+    transfers = d.get("transfers") or []
+    if height >= 16 and transfers:
+        acc_height = max(5, min(len(accs) + 3, height - 8))
+        acc_box = [hdr] + list_lines(state, accs, head, row, acc_height,
+                                     "Chưa có tài khoản nào. Nhấn [+ Thêm] để tạo ví đầu tiên.")
+        tr_lines = [_rule(width), Line().add("   Lịch sử chuyển tiền gần đây", MUTED)]
+        tr_head = Line().add(" ").cell("Ngày", 12, MUTED).add("  ").cell("Từ → Đến", 30, MUTED).add("  ").cell("Số tiền", 16, MUTED, right=True).add("  ").cell("Ghi chú", 25, MUTED)
+        tr_lines.append(tr_head)
+        for tr in transfers[:max(2, height - len(acc_box) - 3)]:
+            route = "%s → %s" % (tr.get("from_account", ""), tr.get("to_account", ""))
+            tr_ln = Line().add(" ").cell(tr.get("date", ""), 12).add("  ").cell(route, 30, ACCENT).add("  ")
+            tr_ln.cell(money(tr.get("amount", 0)), 16, "bold " + INCOME_C, right=True).add("  ")
+            tr_ln.cell(tr.get("note", ""), 25, MUTED)
+            tr_lines.append(tr_ln)
+        return acc_box + tr_lines
+
+    return [hdr] + list_lines(state, accs, head, row, height - 1,
+                              "Chưa có tài khoản nào. Nhấn [+ Thêm] để tạo ví đầu tiên.")
+
+
 def body_lines(state: State, width: int, height: int) -> List[Line]:
     if state.form:
         lines, (first, last) = form_lines(state.form, width)
@@ -1502,12 +1606,14 @@ def body_lines(state: State, width: int, height: int) -> List[Line]:
     if state.tab == 0:
         return overview_lines(state, d, width, height) if d else [Line(), Line().add("   Không có dữ liệu.", MUTED)]
     if state.tab == 1:
-        return transactions_lines(state, width, height)
+        return accounts_lines(state, width, height)
     if state.tab == 2:
-        return plans_lines(state, width, height)
+        return transactions_lines(state, width, height)
     if state.tab == 3:
-        return budgets_lines(state, d, width, height)
+        return plans_lines(state, width, height)
     if state.tab == 4:
+        return budgets_lines(state, d, width, height)
+    if state.tab == 5:
         return goal_tab_lines(state, width, height)
     return chart_lines(state, width, height)
 
@@ -1719,6 +1825,35 @@ def validate(form: Form, today: date) -> Tuple[str, Dict[str, Any], Dict[str, st
         return "goal save", {"id": form.edit_id, "amount": params.get("amount")}, errors
     if form.name == "goal_take":
         return "goal take", {"id": form.edit_id, "amount": params.get("amount")}, errors
+    if "account" in v and v["account"]:
+        params["account"] = v["account"]
+    if form.name == "account_add":
+        if not v.get("name"):
+            errors["name"] = "Nhập tên tài khoản"
+        init_bal = 0
+        if v.get("initial_balance"):
+            try:
+                init_bal = parse_money(v["initial_balance"])
+            except ValueError:
+                errors["initial_balance"] = "Số dư không hợp lệ (vd: 0, 1tr, 500k)"
+        return "account add", {"name": v.get("name", ""), "initial_balance": init_bal, "default": v.get("default") == "1"}, errors
+    if form.name == "account_edit":
+        if not v.get("name"):
+            errors["name"] = "Nhập tên tài khoản"
+        init_bal = 0
+        if v.get("initial_balance"):
+            try:
+                init_bal = parse_money(v["initial_balance"])
+            except ValueError:
+                errors["initial_balance"] = "Số dư không hợp lệ (vd: 0, 1tr, 500k)"
+        return "account edit", {"id": form.edit_id, "name": v.get("name", ""), "initial_balance": init_bal, "default": v.get("default") == "1"}, errors
+    if form.name == "account_transfer":
+        if not v.get("from"):
+            errors["from"] = "Nhập tài khoản nguồn"
+        if not v.get("to"):
+            errors["to"] = "Nhập tài khoản đích"
+        d_val = params.get("date") or today.isoformat()
+        return "account transfer", {"from": v.get("from"), "to": v.get("to"), "amount": params.get("amount"), "date": d_val, "note": v.get("note", "")}, errors
     params["note"] = v["note"]
     if form.name == "tx":
         params.update(id=form.edit_id, kind=v["kind"])
@@ -1763,8 +1898,29 @@ def open_form(state: State, name: str, api: ApiCall) -> Form:
         cats = api("categories", {})
     except Exception:
         cats = {}
-    state.form = Form(name, cats, state.today)
+    try:
+        acc_data = api("account list", {})
+        cats["accounts"] = acc_data.get("accounts", [])
+    except Exception:
+        pass
+    form = Form(name, cats, state.today)
+    if name in ("expense", "income") and cats.get("accounts"):
+        def_acc = next((a["name"] for a in cats["accounts"] if a.get("is_default")), cats["accounts"][0]["name"])
+        form.values["account"] = def_acc
+    state.form = form
     return state.form
+
+
+def open_account_add(state: State, api: ApiCall) -> Form:
+    return open_form(state, "account_add", api)
+
+
+def open_account_transfer(state: State, api: ApiCall) -> Form:
+    form = open_form(state, "account_transfer", api)
+    item = selected_item(state) if state.tab == 1 else None
+    if item and "name" in item:
+        form.values["from"] = item["name"]
+    return form
 
 
 def _amount_text(amount: int) -> str:
@@ -1779,26 +1935,37 @@ def selected_item(state: State) -> Optional[Dict[str, Any]]:
 
 
 def open_edit(state: State, api: ApiCall) -> None:
-    """Form pre-filled with the selected transaction / dòng tiền / ngân sách."""
+    """Form pre-filled with the selected transaction / dòng tiền / ngân sách / tài khoản."""
     item = selected_item(state)
     if item is None:
         return
-    if state.tab == 4:
+    if state.tab == 1:
+        form = open_form(state, "account_edit", api)
+        form.values.update(name=item["name"], initial_balance=_amount_text(item["initial_balance"]),
+                           default="1" if item.get("is_default") else "0")
+        form.title = "Sửa tài khoản: %s" % item["name"]
+        form.edit_id = item["id"]
+        return
+    if state.tab == 5:
         open_goal_edit(state, item["id"], api)
         return
-    if state.tab == 3:
+    if state.tab == 4:
         form = open_form(state, "budget_edit", api)
         form.values["amount"] = _amount_text(item["limit"])
         form.title = "Sửa ngân sách: %s" % item["category"]
         form.edit_id = item["category"]
         return
-    if state.tab == 2 and item.get("status", "pending") != "pending":
+    if state.tab == 3 and item.get("status", "pending") != "pending":
         state.set_status("Dòng tiền này đã %s" % ("xong" if item["status"] == "done" else "huỷ"), False)
         return
-    if state.tab == 1:
+    if state.tab == 2:
         form = open_form(state, "tx", api)
         form.values.update(amount=_amount_text(item["amount"]), category=item["category"],
                            note=item.get("note", ""), date=_dmy(date.fromisoformat(item["date"])), kind=item["kind"])
+        if item.get("account_id") and "accounts" in form.cats:
+            acc_name = next((a["name"] for a in form.cats["accounts"] if a["id"] == item["account_id"]), "")
+            if acc_name:
+                form.values["account"] = acc_name
         form.title = "Sửa giao dịch #%d" % item["id"]
     else:
         form = open_form(state, "plan", api)
@@ -1928,6 +2095,19 @@ def submit(state: State, api: ApiCall) -> None:
         icon = "pencil" if cmd == "goal edit" else "check"
         celebrate(state, api, "%s mục tiêu %s" % (verb, name), "save", icon, verb + "!", name)
         return
+    if cmd in ("account add", "account edit"):
+        a = result.get("account") or {}
+        name = a.get("name", "")
+        verb = "Đã sửa" if cmd == "account edit" else "Đã thêm"
+        celebrate(state, api, "%s tài khoản %s" % (verb, name), "save", "pencil" if cmd == "account edit" else "check",
+                  verb + "!", name)
+        return
+    if cmd == "account transfer":
+        tr = result.get("transfer") or {}
+        amt = money(tr.get("amount", 0))
+        msg = "%s → %s: %s" % (tr.get("from_account", ""), tr.get("to_account", ""), amt)
+        celebrate(state, api, "Đã chuyển %s" % msg, "save", "coin", "Đã chuyển!", msg)
+        return
     income = params.get("income") or params.get("kind") == "income" or cmd == "income"
     amount = money(params["amount"] if income else -params["amount"], signed=True)
     item = "%s %s" % (params.get("name") or params["category"], amount)
@@ -1985,7 +2165,7 @@ def switch_tab(state: State, tab: int, api: ApiCall) -> None:
         state.slide = (state.tab, tab, state.now)
         state.tab, state.selected, state.scroll = tab, None, 0
         play(state, "tab")
-        if tab in (0, 3):
+        if tab in (0, 4, 5):
             state.bars_t0 = state.now
     load(state, api)
 
@@ -2006,17 +2186,17 @@ def move_month(state: State, api: ApiCall, key: str, step: int) -> None:
     this = state.today.strftime("%Y-%m")
     if key == "tx":
         state.tx_month = None if step == 0 else shift_month(state.tx_month, step) if state.tx_month else this
-        change_view(state, api, 1)
+        change_view(state, api, 2)
     else:
         state.budget_month = shift_month(state.budget_month or this, step)
-        change_view(state, api, 3)
+        change_view(state, api, 4)
 
 
 def chart_set(state: State, api: ApiCall, key: str, value: str) -> None:
     state.chart[key] = int(value) if key in ("days", "ahead") else value
     state.chart["cursor"] = None
     if key in ("days", "ahead"):
-        state.data.pop(5, None)
+        state.data.pop(6, None)
         load(state, api)
 
 
@@ -2057,16 +2237,16 @@ def handle_key(state: State, key: str, api: ApiCall) -> None:
         switch_tab(state, int(key) - 1, api)
     elif key == "tab":
         switch_tab(state, (state.tab + 1) % len(TABS), api)
-    elif state.tab == 5 and key in ("left", "right", "h", "l"):
+    elif state.tab == 6 and key in ("left", "right", "h", "l"):
         move_cursor(state, -1 if key in ("left", "h") else 1)
-    elif state.tab == 5 and key in ("[", "{"):
+    elif state.tab == 6 and key in ("[", "{"):
         move_cursor(state, -7)
-    elif state.tab == 5 and key in ("]", "}"):
+    elif state.tab == 6 and key in ("]", "}"):
         move_cursor(state, 7)
-    elif state.tab == 5 and key in ("0", "home"):
-        n_hist = len((state.data.get(5) or {}).get("series") or [])
+    elif state.tab == 6 and key in ("0", "home"):
+        n_hist = len((state.data.get(6) or {}).get("series") or [])
         state.chart["cursor"] = max(0, n_hist - 1)
-    elif state.tab == 5 and key in ("$", "end"):
+    elif state.tab == 6 and key in ("$", "end"):
         n = _chart_count(state)
         state.chart["cursor"] = max(0, n - 1)
     elif key in ("j", "down") and items:
@@ -2076,14 +2256,31 @@ def handle_key(state: State, key: str, api: ApiCall) -> None:
     elif key == "esc":
         state.selected = None
         state.chart["cursor"] = None
+    elif key == "d" and state.tab == 1 and state.selected is not None:
+        acc = items[state.selected]
+        try:
+            api("account set-default", {"id": acc["id"]})
+            refresh(state, api)
+            celebrate(state, api, "Đã đặt %s làm mặc định" % acc["name"], "save", "check", "Đã đặt!", acc["name"])
+        except Exception as e:
+            fail(state, str(e))
+    elif key == "x" and state.tab == 1 and state.selected is not None:
+        acc = items[state.selected]
+        ask(state, "Xoá", "tài khoản %s" % acc["name"], "#%d %s" % (acc["id"], acc["name"]), "account rm",
+            {"id": acc["id"]},
+            ("Đã xoá tài khoản %s" % acc["name"], "delete", "trash", "Đã xoá", acc["name"], "info", False))
+    elif key == "account_add" or (key == "a" and state.tab == 1):
+        open_account_add(state, api)
+    elif key == "account_transfer" or (key == "t" and state.tab == 1):
+        open_account_transfer(state, api)
     elif key == "s":
         state.settings = True
-    elif key in ("[", "]") and state.tab in (1, 3):
-        move_month(state, api, "tx" if state.tab == 1 else "budget", -1 if key == "[" else 1)
+    elif key in ("[", "]") and state.tab in (2, 4):
+        move_month(state, api, "tx" if state.tab == 2 else "budget", -1 if key == "[" else 1)
     elif key == "b":
         open_form(state, "budget", api)
     elif key == "g":
-        if state.tab == 4:
+        if state.tab == 5:
             open_goal_add(state, api)
         else:
             open_goal(state, api)
@@ -2097,12 +2294,11 @@ def handle_key(state: State, key: str, api: ApiCall) -> None:
         open_goal_edit(state, int(key.split(":")[1]), api)
     elif key.startswith("goal_rm:"):
         confirm_goal_rm(state, int(key.split(":")[1]), api)
-    elif key == "e" and state.tab == 4 and state.selected is not None:
+    elif key == "e" and state.tab == 5 and state.selected is not None:
         open_goal_edit(state, items[state.selected]["id"], api)
-    elif key == "x" and state.tab == 4 and state.selected is not None:
+    elif key == "x" and state.tab == 5 and state.selected is not None:
         confirm_goal_rm(state, items[state.selected]["id"], api)
-        confirm_goal_rm(state, int(key.split(":")[1]), api)
-    elif key == "c" and state.tab == 2 and state.selected is not None:
+    elif key == "c" and state.tab == 3 and state.selected is not None:
         p = items[state.selected]
         if p.get("status", "pending") == "pending":
             amount = short_money(p["amount"] if p["kind"] == "income" else -p["amount"])
@@ -2117,7 +2313,7 @@ def handle_key(state: State, key: str, api: ApiCall) -> None:
         open_edit(state, api)
     elif key in ("a", "i", "p"):
         open_form(state, {"a": "expense", "i": "income", "p": "plan"}[key], api)
-    elif key == "d" and state.tab == 2 and state.selected is not None \
+    elif key == "d" and state.tab == 3 and state.selected is not None \
             and items[state.selected].get("status", "pending") == "pending":
         p = items[state.selected]
         try:
@@ -2129,13 +2325,13 @@ def handle_key(state: State, key: str, api: ApiCall) -> None:
         item = "%s %s" % (p["name"], money(p["amount"] if income else -p["amount"], signed=True))
         title = "Đã nhận!" if income else "Đã thanh toán!"
         celebrate(state, api, "%s %s %s" % (title[:-1], G["ok"], item), "done", "coin", title, item)
-    elif key == "x" and state.tab == 1 and state.selected is not None:
+    elif key == "x" and state.tab == 2 and state.selected is not None:
         t = items[state.selected]
         label = "%s %s ngày %s" % (t["category"], money(t["amount"]), _vi_date(t["date"]))
         short = "#%d %s" % (t["id"], short_money(-t["amount"] if t["kind"] == "expense" else t["amount"]))
         ask(state, "Xoá", label, short, "rm", {"id": t["id"]},
             ("Đã xoá giao dịch #%d" % t["id"], "delete", "trash", "Đã xoá", "giao dịch #%d" % t["id"], "info", False))
-    elif key == "x" and state.tab == 3 and state.selected is not None:
+    elif key == "x" and state.tab == 4 and state.selected is not None:
         b = items[state.selected]
         ask(state, "Xoá", "ngân sách %s (%s)" % (b["category"], money(b["limit"])), "NS %s" % b["category"],
             "budget delete", {"category": b["category"]},
@@ -2170,7 +2366,7 @@ def handle_click(state: State, x: int, y: int, api: ApiCall) -> None:
         move_month(state, api, action[1], action[2])
     elif kind == "plans":
         state.plans_all = action[1]
-        change_view(state, api, 2)
+        change_view(state, api, 3)
     elif kind == "chartset":
         chart_set(state, api, action[1], action[2])
     elif kind == "chart_jump":
