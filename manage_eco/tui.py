@@ -191,6 +191,7 @@ FORMS = {
                                       show_if=("every", "monthly"), short="Ngày trả"),
                                 Field("due", "Ngày bắt đầu", short="Bắt đầu"),
                                 Field("kind", "Loại", KINDS)]),
+    "plan_done": ("Hoàn thành dòng tiền", [_ACCOUNT, Field("date", "Ngày", placeholder="hôm nay")]),
 }
 
 ApiCall = Callable[[str, Dict[str, Any]], Dict[str, Any]]
@@ -379,7 +380,13 @@ class Form:
             return [(c, c) for c in list(self.cats.get(self.kind(), []))[:8]]
         if f.key in ("account", "from", "to"):
             acc_list = self.cats.get("accounts", [])
-            return [(a.get("name", str(a)), a.get("name", str(a))) for a in acc_list]
+            chips = []
+            for a in acc_list:
+                name = a.get("name", str(a))
+                bal = a.get("balance")
+                label = "%s (%s)" % (name, short_money(bal)) if bal is not None else name
+                chips.append((name, label))
+            return chips
         if f.key == "day":
             return DAY_CHIPS
         if f.key == "by":
@@ -1856,6 +1863,25 @@ def validate(form: Form, today: date) -> Tuple[str, Dict[str, Any], Dict[str, st
             errors["to"] = "Nhập tài khoản đích"
         d_val = params.get("date") or today.isoformat()
         return "account transfer", {"from": v.get("from"), "to": v.get("to"), "amount": params.get("amount"), "date": d_val, "note": v.get("note", "")}, errors
+    if form.name == "plan_done":
+        if "account" in v and not v["account"]:
+            if form.cats.get("accounts"):
+                errors["account"] = "Chọn tài khoản thanh toán"
+        plan = getattr(form, "meta", None)
+        if plan and plan.get("kind") == "expense":
+            acc_name = v.get("account")
+            acc_list = form.cats.get("accounts", [])
+            matched_acc = next(
+                (a for a in acc_list if a.get("name") == acc_name or str(a.get("id")) == acc_name),
+                None
+            )
+            if matched_acc and matched_acc.get("balance") is not None:
+                if matched_acc["balance"] < plan.get("amount", 0):
+                    errors["account"] = "Số dư không đủ (%s < %s)" % (
+                        short_money(matched_acc["balance"]), short_money(plan.get("amount", 0))
+                    )
+        d_val = params.get("date") or today.isoformat()
+        return "plan done", {"id": form.edit_id, "account": v.get("account"), "date": d_val}, errors
     params["note"] = v["note"]
     if form.name == "tx":
         params.update(id=form.edit_id, kind=v["kind"])
@@ -1906,11 +1932,23 @@ def open_form(state: State, name: str, api: ApiCall) -> Form:
     except Exception:
         pass
     form = Form(name, cats, state.today)
-    if name in ("expense", "income") and cats.get("accounts"):
+    if name in ("expense", "income", "plan_done") and cats.get("accounts"):
         def_acc = next((a["name"] for a in cats["accounts"] if a.get("is_default")), cats["accounts"][0]["name"])
         form.values["account"] = def_acc
     state.form = form
     return state.form
+
+
+def open_plan_done(state: State, plan: Dict[str, Any], api: ApiCall) -> Form:
+    form = open_form(state, "plan_done", api)
+    form.edit_id = plan["id"]
+    sign = "+" if plan.get("kind") == "income" else "-"
+    form.title = "Hoàn thành: %s (%s%s)" % (
+        plan.get("name", "Dòng tiền"), sign, money(plan.get("amount", 0))
+    )
+    form.values["date"] = state.today.isoformat()
+    form.meta = plan
+    return form
 
 
 def open_account_add(state: State, api: ApiCall) -> Form:
@@ -2109,6 +2147,15 @@ def submit(state: State, api: ApiCall) -> None:
         amt = money(tr.get("amount", 0))
         msg = "%s → %s: %s" % (tr.get("from_account", ""), tr.get("to_account", ""), amt)
         celebrate(state, api, "Đã chuyển %s" % msg, "save", "coin", "Đã chuyển!", msg)
+        return
+    if cmd == "plan done":
+        tx = result.get("transaction") or {}
+        p = result.get("plan") or {}
+        income = tx.get("kind") == "income"
+        amt = tx.get("amount", 0)
+        item = "%s %s" % (p.get("name", "Dòng tiền"), money(amt if income else -amt, signed=True))
+        title = "Đã nhận!" if income else "Đã thanh toán!"
+        celebrate(state, api, "%s %s %s" % (title[:-1], G["ok"], item), "done", "coin", title, item)
         return
     income = params.get("income") or params.get("kind") == "income" or cmd == "income"
     amount = money(params["amount"] if income else -params["amount"], signed=True)
@@ -2318,15 +2365,7 @@ def handle_key(state: State, key: str, api: ApiCall) -> None:
     elif key == "d" and state.tab == 3 and state.selected is not None \
             and items[state.selected].get("status", "pending") == "pending":
         p = items[state.selected]
-        try:
-            api("plan done", {"id": p["id"], "date": state.today.isoformat()})
-        except Exception as e:
-            fail(state, str(e))
-            return
-        income = p["kind"] == "income"
-        item = "%s %s" % (p["name"], money(p["amount"] if income else -p["amount"], signed=True))
-        title = "Đã nhận!" if income else "Đã thanh toán!"
-        celebrate(state, api, "%s %s %s" % (title[:-1], G["ok"], item), "done", "coin", title, item)
+        open_plan_done(state, p, api)
     elif key == "x" and state.tab == 2 and state.selected is not None:
         t = items[state.selected]
         label = "%s %s ngày %s" % (t["category"], money(t["amount"]), _vi_date(t["date"]))

@@ -43,7 +43,7 @@ def _advance(plan: Plan) -> date:
     return plan.due_date
 
 
-def complete_plan(store, plan_id: int, on: date) -> Transaction:
+def complete_plan(store, plan_id: int, on: date, account_id: Optional[int] = None) -> Transaction:
     plan = store.get_plan(plan_id)
     if plan is None:
         raise ValueError("plan not found: %s" % plan_id)
@@ -56,6 +56,7 @@ def complete_plan(store, plan_id: int, on: date) -> Transaction:
         kind=plan.kind,
         category=plan.category,
         note="plan:%s" % plan.name,
+        account_id=account_id,
     )
     store.add_transaction(txn)
 

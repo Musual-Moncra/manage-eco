@@ -11,7 +11,7 @@ from datetime import date
 from typing import Any, Callable, Dict, Optional
 
 from manage_eco import cashflow, plans
-from manage_eco.fmt import parse_date, parse_money
+from manage_eco.fmt import money, parse_date, parse_money
 from manage_eco.models import (
     DAILY, EXPENSE, INCOME, MONTHLY, ONCE, PENDING, WEEKLY, Account, Budget, Goal, Plan, Transaction, Transfer,
 )
@@ -249,11 +249,29 @@ def _plan_or_raise(store, pid: int) -> Plan:
 def plan_done(params, store, today):
     _require(params, "id")
     pid = int(params["id"])
-    _plan_or_raise(store, pid)
-    t = plans.complete_plan(store, pid, _date(params.get("date"), today))
+    p = _plan_or_raise(store, pid)
+    if p.status != PENDING:
+        raise ValueError("dòng tiền #%d không ở trạng thái chờ (status=%s)" % (pid, p.status))
+
+    acc_id = None
     if params.get("account"):
-        t.account_id = _resolve_account_id(store, params["account"])
-        store.update_transaction(t)
+        acc_id = _resolve_account_id(store, params["account"])
+    elif store.get_default_account():
+        acc_id = store.get_default_account().id
+
+    d = _date(params.get("date"), today)
+
+    # Validate sufficient balance for expense plans when account is used
+    if p.kind == EXPENSE and acc_id is not None:
+        bal = store.account_balance(acc_id)
+        if bal < p.amount:
+            acc = store.get_account(acc_id)
+            acc_name = acc.name if acc else str(acc_id)
+            raise ValueError("số dư tài khoản '%s' không đủ (%s < %s)" % (
+                acc_name, money(bal), money(p.amount)
+            ))
+
+    t = plans.complete_plan(store, pid, d, account_id=acc_id)
     return {"transaction": tx_dict(t), "plan": plan_dict(store.get_plan(pid))}
 
 

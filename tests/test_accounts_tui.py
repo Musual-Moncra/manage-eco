@@ -20,6 +20,10 @@ class AccountsFakeApi:
             {"id": 1, "date": "2026-11-07", "amount": 500_000, "from_account_id": 2, "from_account": "Techcombank",
              "to_account_id": 1, "to_account": "Tiền mặt", "note": "Rút ATM"}
         ]
+        self.plans = [
+            {"id": 1, "name": "Tiền nhà", "amount": 2_000_000, "kind": "expense",
+             "due_date": "2026-11-07", "category": "nhà", "recurrence": "once", "status": "pending"}
+        ]
 
     def __call__(self, cmd, params):
         self.calls.append((cmd, params))
@@ -48,7 +52,14 @@ class AccountsFakeApi:
         if cmd == "list":
             return {"transactions": [], "balance": 5_000_000}
         if cmd == "plan list":
-            return {"plans": []}
+            return {"plans": self.plans}
+        if cmd == "plan done":
+            p = next((x for x in self.plans if x["id"] == params["id"]), None)
+            if p:
+                p["status"] = "done"
+            return {"transaction": {"id": 10, "amount": p["amount"] if p else 0, "kind": p["kind"] if p else "expense",
+                                     "category": p["category"] if p else "", "account_id": 1},
+                    "plan": p or {"name": "Test", "status": "done"}}
         if cmd == "budget status":
             return {"budgets": []}
         if cmd == "goal list":
@@ -127,6 +138,40 @@ class AccountsTuiTest(unittest.TestCase):
         self.assertEqual(self.state.form, None)
         add_calls = [c for c in self.api.calls if c[0] == "account add"]
         self.assertEqual(add_calls[-1][1]["initial_balance"], 0)
+
+    def test_plan_done_form_and_balance_check(self):
+        # Switch to Tab 3 (Dòng tiền)
+        tui.switch_tab(self.state, 3, self.api)
+        self.state.selected = 0
+        item = self.state.items()[0]
+        self.assertEqual(item["name"], "Tiền nhà")
+
+        # Press 'd' -> opens plan_done form
+        tui.handle_key(self.state, "d", self.api)
+        self.assertIsNotNone(self.state.form)
+        self.assertEqual(self.state.form.name, "plan_done")
+        self.assertIn("Tiền nhà", self.state.form.title)
+        self.assertEqual(self.state.form.values.get("account"), "Tiền mặt")
+
+        # Check account chips have balances
+        chips = self.state.form.chips(self.state.form.field())
+        chip_dict = dict(chips)
+        self.assertIn("Tiền mặt (1tr)", chip_dict.get("Tiền mặt", ""))
+        self.assertIn("Techcombank (4tr)", chip_dict.get("Techcombank", ""))
+
+        # Try to submit with "Tiền mặt" (1tr < 2tr expense) -> validation error, form stays open
+        tui.submit(self.state, self.api)
+        self.assertIsNotNone(self.state.form)
+        self.assertIn("Số dư không đủ", self.state.form.errors.get("account", ""))
+
+        # Change to "Techcombank" (4tr >= 2tr) -> submit succeeds, form closes
+        self.state.form.values["account"] = "Techcombank"
+        tui.submit(self.state, self.api)
+        self.assertIsNone(self.state.form)
+        done_calls = [c for c in self.api.calls if c[0] == "plan done"]
+        self.assertEqual(len(done_calls), 1)
+        self.assertEqual(done_calls[0][1]["account"], "Techcombank")
+        self.assertEqual(done_calls[0][1]["id"], 1)
 
 
 if __name__ == "__main__":

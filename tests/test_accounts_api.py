@@ -92,6 +92,32 @@ class AccountsApiTest(unittest.TestCase):
         inc = api.execute("income", {"amount": "500k", "category": "bonus"}, self.store, self.today)
         self.assertEqual(self.store.account_balance(self.store.get_account_by_name("Tiền mặt").id), 1_300_000)
 
+    def test_plan_done_with_account_and_validation(self):
+        # Set up accounts
+        api.execute("account add", {"name": "ZaloPay", "initial_balance": "500k"}, self.store, self.today)
+        api.execute("account add", {"name": "Techcombank", "initial_balance": "5tr"}, self.store, self.today)
+
+        # Plan 1: Expense 1tr (ZaloPay only has 500k, Techcombank has 5tr)
+        p1 = api.execute("plan add", {"name": "Mua đồ", "amount": "1tr", "category": "shopping", "due": "2026-11-07"}, self.store, self.today)
+        pid1 = p1["plan"]["id"]
+
+        # Completing expense from ZaloPay must fail due to insufficient balance
+        with self.assertRaises(ValueError) as ctx:
+            api.execute("plan done", {"id": pid1, "account": "ZaloPay"}, self.store, self.today)
+        self.assertIn("không đủ", str(ctx.exception))
+
+        # Completing expense from Techcombank must succeed
+        res = api.execute("plan done", {"id": pid1, "account": "Techcombank"}, self.store, self.today)
+        self.assertEqual(res["plan"]["status"], "done")
+        self.assertEqual(self.store.account_balance(self.store.get_account_by_name("Techcombank").id), 4_000_000)
+
+        # Plan 2: Income 2tr into ZaloPay must succeed
+        p2 = api.execute("plan add", {"name": "Lương tuần", "amount": "2tr", "category": "income", "income": True, "due": "2026-11-07"}, self.store, self.today)
+        pid2 = p2["plan"]["id"]
+        res2 = api.execute("plan done", {"id": pid2, "account": "ZaloPay"}, self.store, self.today)
+        self.assertEqual(res2["plan"]["status"], "done")
+        self.assertEqual(self.store.account_balance(self.store.get_account_by_name("ZaloPay").id), 2_500_000)
+
     def test_dash_includes_accounts(self):
         api.execute("account add", {"name": "Tiền mặt", "initial_balance": "1tr"}, self.store, self.today)
         d = api.execute("dash", {}, self.store, self.today)

@@ -184,10 +184,10 @@ python3 -m manage_eco --json --db eco.db --today 2026-11-06 plan list --all
 
 Without `--all`, only `pending` plans are returned.
 
-### `plan done ID [-d DATE]`
+### `plan done ID [-d DATE] [-a ACCOUNT]`
 
 ```bash
-python3 -m manage_eco --json --db eco.db --today 2026-11-06 plan done 1 -d 2026-11-06
+python3 -m manage_eco --json --db eco.db --today 2026-11-06 plan done 1 -d 2026-11-06 -a Techcombank
 ```
 
 ```json
@@ -197,6 +197,10 @@ python3 -m manage_eco --json --db eco.db --today 2026-11-06 plan done 1 -d 2026-
 A `once` plan becomes `done`; `daily`/`weekly`/`monthly` plans advance
 `due_date` and stay `pending` (month-end is clamped, e.g. 31 → 28/30, and
 monthly keeps the anchor day so it returns to 31).
+`-a / --account` specifies the wallet (defaults to the primary default account).
+If completing an expense plan and the account balance is insufficient, it
+fails with exit code 2 `invalid`. In the TUI, pressing `d` (or `✓ Xong`)
+opens a confirmation form with account chips and balance validation.
 
 ### `plan cancel ID`
 

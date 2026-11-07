@@ -114,6 +114,11 @@ class FakeApi:
             return {"accounts": ACCOUNTS, "total_balance": 6_000_000}
         if cmd == "account transfers":
             return {"transfers": []}
+        if cmd == "plan done":
+            p = next((x for x in PLANS if x["id"] == params.get("id")), {"name": "lương", "amount": 20_000_000, "kind": "income"})
+            return {"transaction": {"id": 99, "date": params.get("date", "2026-11-06"), "amount": p["amount"],
+                                     "kind": p["kind"], "category": p.get("category", ""), "note": "plan:" + p["name"]},
+                    "plan": dict(p, status="done")}
         plans = PLANS + [DONE_PLAN] if params.get("all") else PLANS
         return {"dash": DASH, "list": {"transactions": TXS, "balance": 1}, "plan list": {"plans": plans},
                 "budget status": {"month": "2026-11", "budgets": DASH["budgets"]},
@@ -236,7 +241,10 @@ class ClickTest(unittest.TestCase):
         self.assertIn("✓ Xong", out)
         self.assertIn("hàng tháng · ngày 5", out)
         click(self.state, ("key", "d"), self.api)
-        self.assertEqual(self.api.made("plan done"), [{"id": 8, "date": "2026-11-06"}])
+        self.assertIsNotNone(self.state.form)
+        self.assertEqual(self.state.form.name, "plan_done")
+        click(self.state, ("key", "enter"), self.api)
+        self.assertEqual(self.api.made("plan done"), [{"id": 8, "account": "Tiền mặt", "date": "2026-11-06"}])
         self.assertIn("lương", self.state.status[0])
 
     def test_add_expense_by_clicks(self):
