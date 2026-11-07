@@ -464,7 +464,7 @@ class State:
         else:
             try:
                 from manage_eco.web import start_share_server
-                from manage_eco.tunnel import CloudflareTunnel
+                from manage_eco.tunnel import create_tunnel
                 self.share_pin = f"{secrets.randbelow(9000) + 1000}"
                 store = getattr(self, "store", None)
                 if store is None:
@@ -481,7 +481,7 @@ class State:
                     active_tab=cur_tab_key,
                     sync_mode=self.share_sync_mode,
                 )
-                self.share_tunnel = CloudflareTunnel()
+                self.share_tunnel = create_tunnel()
                 self.share_tunnel.start(self.share_server.port)
                 self.share_active = True
                 self.set_status("Đã bật chia sẻ trực tiếp")
@@ -1743,9 +1743,10 @@ def share_tab_lines(state: State, width: int, height: int) -> List[Line]:
 
         l_sub = Line().add("   Mã PIN: ", MUTED).add(pin, "bold " + PINK)
         if tunnel_url:
-            l_sub.add("   (Đã bật HTTPS Cloudflare cho 4G từ xa)", MUTED)
+            provider = getattr(state.share_tunnel, "provider_name", "HTTPS")
+            l_sub.add(f"   (Đã bật HTTPS {provider} cho 4G từ xa)", MUTED)
         else:
-            l_sub.add(f"   (Wi-Fi nội bộ: {local_url} · Cài 'brew install cloudflared' để mở 4G từ xa)", MUTED)
+            l_sub.add(f"   (Wi-Fi nội bộ: {local_url} · Cài 'brew install cloudflared' hoặc bật Tailscale để mở 4G từ xa)", MUTED)
         out.append(l_sub)
         out.append(Line())
     else:

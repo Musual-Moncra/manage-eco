@@ -7,7 +7,7 @@ import socket
 import subprocess
 import threading
 import time
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 
 def get_local_ip() -> str:
@@ -263,12 +263,89 @@ def generate_terminal_qr(text: str) -> List[str]:
     return lines
 
 
+def find_tailscale_bin() -> Optional[str]:
+    import shutil
+    import os
+    p = shutil.which("tailscale")
+    if p:
+        return p
+    for candidate in ("/usr/local/bin/tailscale", "/Applications/Tailscale.app/Contents/MacOS/Tailscale"):
+        if os.path.exists(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return None
+
+
+class TailscaleTunnel:
+    """Manages Tailscale Funnel / Serve to share local web server with Let's Encrypt HTTPS."""
+
+    def __init__(self) -> None:
+        self.url: Optional[str] = None
+        self.provider_name: str = "Tailscale Funnel"
+        self._running: bool = False
+        self._bin: Optional[str] = find_tailscale_bin()
+
+    def is_running(self) -> bool:
+        return self._running and self.url is not None
+
+    def start(self, local_port: int, wait_seconds: float = 3.0) -> Optional[str]:
+        bin_path = self._bin or "tailscale"
+        try:
+            # 1. Check if tailscale is stopped -> wake up if needed
+            stat = subprocess.run([bin_path, "status"], capture_output=True, text=True, timeout=2.0)
+            if "stopped" in (stat.stdout or "").lower() or "stopped" in (stat.stderr or "").lower():
+                subprocess.run([bin_path, "up"], capture_output=True, text=True, timeout=2.0)
+
+            # 2. Run funnel in background
+            res = subprocess.run(
+                [bin_path, "funnel", "--yes", "--bg", str(local_port)],
+                capture_output=True,
+                text=True,
+                timeout=wait_seconds,
+            )
+            out = (res.stdout or "") + " " + (res.stderr or "")
+            m = re.search(r"https://[a-zA-Z0-9.-]+\.ts\.net", out)
+            if m:
+                self.url = m.group(0).rstrip("/")
+                self._running = True
+                self.provider_name = "Tailscale Funnel"
+                return self.url
+
+            # 3. Fallback: check funnel status json if available
+            st_json = subprocess.run([bin_path, "funnel", "status", "--json"], capture_output=True, text=True, timeout=2.0)
+            if st_json.returncode == 0:
+                import json
+                data = json.loads(st_json.stdout)
+                web = data.get("Web", {})
+                for host in web.keys():
+                    domain = host.split(":")[0]
+                    self.url = f"https://{domain}"
+                    self._running = True
+                    self.provider_name = "Tailscale Funnel"
+                    return self.url
+        except Exception:
+            pass
+
+        self._running = False
+        self.url = None
+        return None
+
+    def stop(self) -> None:
+        bin_path = self._bin or "tailscale"
+        try:
+            subprocess.run([bin_path, "funnel", "--https=443", "off"], capture_output=True, timeout=2.0)
+        except Exception:
+            pass
+        self._running = False
+        self.url = None
+
+
 class CloudflareTunnel:
     """Manages an external cloudflared quick tunnel subprocess without blocking."""
 
     def __init__(self) -> None:
         self.proc: Optional[subprocess.Popen] = None
         self.url: Optional[str] = None
+        self.provider_name: str = "Cloudflare"
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
 
@@ -328,3 +405,55 @@ class CloudflareTunnel:
                     pass
             self.proc = None
             self.url = None
+
+
+class AutoTunnel:
+    """Unified remote tunnel that automatically tries Tailscale Funnel, then Cloudflare Tunnel."""
+
+    def __init__(self) -> None:
+        self.active_tunnel: Optional[Any] = None
+        self.url: Optional[str] = None
+        self.provider_name: str = "Remote Tunnel"
+        self._running: bool = False
+
+    def is_running(self) -> bool:
+        return self._running and self.url is not None
+
+    def start(self, local_port: int, wait_seconds: float = 2.0) -> Optional[str]:
+        # 1. Prefer Tailscale if available
+        ts = TailscaleTunnel()
+        url = ts.start(local_port, wait_seconds=wait_seconds)
+        if url:
+            self.active_tunnel = ts
+            self.url = url
+            self._running = True
+            self.provider_name = getattr(ts, "provider_name", "Tailscale Funnel")
+            return url
+
+        # 2. Fall back to Cloudflare
+        cf = CloudflareTunnel()
+        url = cf.start(local_port, wait_seconds=wait_seconds)
+        if url:
+            self.active_tunnel = cf
+            self.url = url
+            self._running = True
+            self.provider_name = getattr(cf, "provider_name", "Cloudflare")
+            return url
+
+        self._running = False
+        return None
+
+    def stop(self) -> None:
+        if self.active_tunnel:
+            try:
+                self.active_tunnel.stop()
+            except Exception:
+                pass
+            self.active_tunnel = None
+        self.url = None
+        self._running = False
+
+
+def create_tunnel() -> AutoTunnel:
+    """Create a smart tunnel that tries Tailscale Funnel, then Cloudflare Tunnel."""
+    return AutoTunnel()
