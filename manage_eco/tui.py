@@ -162,10 +162,10 @@ FORMS = {
     "income": ("Thêm khoản thu", _TX_FIELDS),
     "tx": ("Sửa giao dịch", _TX_FIELDS + [Field("kind", "Loại", KINDS)]),
     "account_add": ("Thêm tài khoản", [Field("name", "Tên tài khoản", placeholder="vd: Tiền mặt, ZaloPay, MB Bank"),
-                                       Field("initial_balance", "Số dư ban đầu", placeholder="mặc định: 0 (vd: 500k, 1tr)"),
+                                       Field("balance", "Số dư", placeholder="0 (vd: 500k, 1tr) (không bắt buộc)"),
                                        Field("default", "Đặt mặc định", DEFAULT_CHOICES)]),
     "account_edit": ("Sửa tài khoản", [Field("name", "Tên tài khoản"),
-                                        Field("balance", "Số dư hiện tại", placeholder="nhập số dư thực tế"),
+                                        Field("balance", "Số dư", placeholder="nhập số dư thực tế"),
                                         Field("default", "Đặt mặc định", DEFAULT_CHOICES)]),
     "account_transfer": ("Chuyển tiền nội bộ", [Field("from", "Từ tài khoản", placeholder="tên tài khoản gửi"),
                                                 Field("to", "Đến tài khoản", placeholder="tên tài khoản nhận"),
@@ -1548,16 +1548,13 @@ def accounts_lines(state: State, width: int, height: int) -> List[Line]:
         hdr.button("+ Thêm", "a", "a", short="+")
         hdr.button("⇄ Chuyển", "t", "t", short="⇄")
 
-    name_w = 24 if wide else 18 if full else 14
-    bal_w = 18 if full else 12
-    init_w = 16 if wide else 12 if full else 0
+    name_w = 26 if wide else 20 if full else 16
+    bal_w = 18 if full else 14
     pct_w = 6
-    bar_w = max(4, min(30 if wide else 20, width - 1 - name_w - 2 - bal_w - (init_w + 2 if init_w else 0) - pct_w - 12))
+    bar_w = max(6, min(36 if wide else 24, width - 1 - name_w - 2 - bal_w - 2 - pct_w - 12))
 
     head = Line().add(" ").cell("Tài khoản", name_w, MUTED).add("  ")
-    head.cell("Số dư hiện tại", bal_w, MUTED, right=True).add("  ")
-    if init_w:
-        head.cell("Số dư đầu", init_w, MUTED, right=True).add("  ")
+    head.cell("Số dư", bal_w, MUTED, right=True).add("  ")
     head.cell("Tỷ lệ", bar_w + pct_w + 2, MUTED).add("  ")
     head.cell("Mặc định", 10, MUTED)
 
@@ -1565,13 +1562,10 @@ def accounts_lines(state: State, width: int, height: int) -> List[Line]:
         pct = float(a.get("pct", 0.0))
         bal = a.get("balance", 0)
         bal_c = INCOME_C if bal > 0 else (WARN_C if bal == 0 else EXPENSE_C)
-        init_bal = a.get("initial_balance", 0)
         is_def = bool(a.get("is_default", False))
 
         ln = Line().add(" ").cell(a.get("name", "Ví"), name_w, "bold").add("  ")
         ln.cell(money(bal) if full else short_money(bal), bal_w, "bold " + bal_c, right=True).add("  ")
-        if init_w:
-            ln.cell(money(init_bal) if full else short_money(init_bal), init_w, MUTED, right=True).add("  ")
         ln.text.append_text(_bar(pct, bar_w, state.bar_pct(pct)))
         ln.cell(" %2.0f%%" % pct, pct_w, right=True).add("  ")
         if is_def:

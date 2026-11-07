@@ -123,7 +123,7 @@ def build_parser() -> argparse.ArgumentParser:
     asub = account.add_subparsers(dest="sub")
     s = asub.add_parser("add", help="thêm tài khoản mới")
     s.add_argument("name", help="tên tài khoản")
-    s.add_argument("initial_balance", nargs="?", default="0", help="số dư ban đầu")
+    s.add_argument("balance", nargs="?", default="0", help="số dư tài khoản (mặc định: 0)")
     s.add_argument("--default", action="store_true", help="đặt làm tài khoản mặc định")
 
     s = asub.add_parser("list", help="liệt kê tài khoản")

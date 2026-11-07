@@ -75,7 +75,7 @@ def _initial_amount(v: Any) -> int:
         return 0
     if isinstance(v, int) and not isinstance(v, bool):
         if v < 0:
-            raise ValueError("số dư ban đầu phải >= 0")
+            raise ValueError("số dư phải >= 0")
         return v
     return parse_money(str(v).strip(), allow_zero=True)
 

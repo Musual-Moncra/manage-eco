@@ -108,7 +108,7 @@ class AccountsTuiTest(unittest.TestCase):
 
         # Fill and submit
         self.state.form.values["name"] = "ZaloPay"
-        self.state.form.values["initial_balance"] = "500k"
+        self.state.form.values["balance"] = "500k"
         tui.submit(self.state, self.api)
         self.assertIsNone(self.state.form)
         add_calls = [c for c in self.api.calls if c[0] == "account add"]
@@ -141,7 +141,7 @@ class AccountsTuiTest(unittest.TestCase):
         tui.switch_tab(self.state, 1, self.api)
         tui.open_account_add(self.state, self.api)
         self.state.form.values["name"] = "Ví Mới"
-        self.state.form.values["initial_balance"] = "0"
+        self.state.form.values["balance"] = "0"
         tui.submit(self.state, self.api)
         self.assertEqual(self.state.form, None)
         add_calls = [c for c in self.api.calls if c[0] == "account add"]
@@ -151,7 +151,7 @@ class AccountsTuiTest(unittest.TestCase):
         tui.switch_tab(self.state, 1, self.api)
         tui.open_account_add(self.state, self.api)
         self.state.form.values["name"] = "Ví Trống"
-        self.state.form.values["initial_balance"] = ""
+        self.state.form.values["balance"] = ""
         tui.submit(self.state, self.api)
         self.assertIsNone(self.state.form)
         add_calls = [c for c in self.api.calls if c[0] == "account add"]

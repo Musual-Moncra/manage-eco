@@ -56,15 +56,15 @@ def goal_table(goals: List[dict]) -> Table:
 
 
 def account_table(accounts: List[dict], total_balance: int = 0) -> Table:
-    t = _table("Tài khoản & Ví tiền", "#", "Tên tài khoản", "Số dư ban đầu", "Số dư hiện tại", "Tỷ lệ",
-               right=("#", "Số dư ban đầu", "Số dư hiện tại", "Tỷ lệ"))
+    t = _table("Tài khoản & Ví tiền", "#", "Tên tài khoản", "Số dư", "Tỷ lệ",
+               right=("#", "Số dư", "Tỷ lệ"))
     for a in accounts:
         def_tag = " [bold %s][Mặc định][/]" % ACCENT if a.get("is_default") else ""
         bal_str = _bal(a["balance"])
         pct_str = "%3.1f%%" % a.get("pct", 0.0)
-        t.add_row(str(a["id"]), a["name"] + def_tag, money(a["initial_balance"]), bal_str, pct_str)
+        t.add_row(str(a["id"]), a["name"] + def_tag, bal_str, pct_str)
     if not accounts:
-        t.add_row("", "[dim]chưa có tài khoản[/]", "", "", "")
+        t.add_row("", "[dim]chưa có tài khoản[/]", "", "")
     return t
 
 
