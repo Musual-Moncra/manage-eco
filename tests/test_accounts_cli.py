@@ -74,6 +74,25 @@ class AccountsCliTest(unittest.TestCase):
         self.assertTrue(data["ok"])
         self.assertIsNotNone(data["data"]["transaction"]["account_id"])
 
+    def test_json_account_add_default_zero(self):
+        code, out = self.run_cli("--json", "account", "add", "Ví Không")
+        self.assertEqual(code, 0)
+        data = json.loads(out)
+        self.assertEqual(data["data"]["account"]["balance"], 0)
+        self.assertEqual(data["data"]["account"]["initial_balance"], 0)
+
+    def test_json_account_set_balance_and_edit_balance(self):
+        self.run_cli("--json", "account", "add", "Tiền mặt", "500k")
+        code, out = self.run_cli("--json", "account", "set-balance", "Tiền mặt", "1.2tr")
+        self.assertEqual(code, 0)
+        data = json.loads(out)
+        self.assertEqual(data["data"]["account"]["balance"], 1_200_000)
+
+        code2, out2 = self.run_cli("--json", "account", "edit", "Tiền mặt", "--balance", "2tr")
+        self.assertEqual(code2, 0)
+        data2 = json.loads(out2)
+        self.assertEqual(data2["data"]["account"]["balance"], 2_000_000)
+
     def test_json_mode_does_not_import_rich(self):
         # Run subprocess with clean env and verify rich is not in sys.modules
         script = (

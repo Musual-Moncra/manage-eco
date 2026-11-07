@@ -325,17 +325,21 @@ python3 -m manage_eco --json --db eco.db goal edit 1 --target 35tr
 python3 -m manage_eco --json --db eco.db goal rm 1
 ```
 
-### `account <add|list|edit|rm|transfer|transfers|set-default>`
+### `account <add|list|edit|set-balance|rm|transfer|transfers|set-default>`
 
 Manage wallets/accounts (tiền mặt, ngân hàng, ví điện tử) and internal transfers:
 ```bash
-# Add account
+# Add account (initial balance defaults to 0 if omitted)
 python3 -m manage_eco --json --db eco.db account add "Tiền mặt" 1.5tr --default
-python3 -m manage_eco --json --db eco.db account add "ZaloPay" 500k
+python3 -m manage_eco --json --db eco.db account add "ZaloPay"  # defaults to 0
 python3 -m manage_eco --json --db eco.db account add "Techcombank" 20tr
 
 # List accounts
 python3 -m manage_eco --json --db eco.db account list
+
+# Adjust / set current wallet balance directly (replaces calculating initial balance)
+python3 -m manage_eco --json --db eco.db account set-balance "Tiền mặt" 2tr
+python3 -m manage_eco --json --db eco.db account edit 1 --balance 2tr
 
 # Transfer money between accounts (internal transfers do not affect monthly expense/income)
 python3 -m manage_eco --json --db eco.db account transfer Techcombank ZaloPay 2tr -n "nap vi"
@@ -345,9 +349,6 @@ python3 -m manage_eco --json --db eco.db account transfers
 
 # Set default account
 python3 -m manage_eco --json --db eco.db account set-default 2
-
-# Edit account
-python3 -m manage_eco --json --db eco.db account edit 1 --initial-balance 2tr
 
 # Remove account (fails if transactions or transfers exist)
 python3 -m manage_eco --json --db eco.db account rm 3

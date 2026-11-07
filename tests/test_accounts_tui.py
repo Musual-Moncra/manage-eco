@@ -47,6 +47,14 @@ class AccountsFakeApi:
                 a["is_default"] = (a["id"] == params["id"])
             acc = next(a for a in self.accounts if a["id"] == params["id"])
             return {"account": acc}
+        if cmd == "account edit":
+            acc = next((a for a in self.accounts if a["id"] == params["id"]), None)
+            if acc:
+                if "name" in params:
+                    acc["name"] = params["name"]
+                if "balance" in params:
+                    acc["balance"] = params["balance"]
+            return {"account": acc or {}}
         if cmd == "categories":
             return {"expense": ["food", "rent"], "income": ["salary"]}
         if cmd == "list":
@@ -138,6 +146,35 @@ class AccountsTuiTest(unittest.TestCase):
         self.assertEqual(self.state.form, None)
         add_calls = [c for c in self.api.calls if c[0] == "account add"]
         self.assertEqual(add_calls[-1][1]["initial_balance"], 0)
+
+    def test_account_add_empty_balance_defaults_to_zero(self):
+        tui.switch_tab(self.state, 1, self.api)
+        tui.open_account_add(self.state, self.api)
+        self.state.form.values["name"] = "Ví Trống"
+        self.state.form.values["initial_balance"] = ""
+        tui.submit(self.state, self.api)
+        self.assertIsNone(self.state.form)
+        add_calls = [c for c in self.api.calls if c[0] == "account add"]
+        self.assertEqual(add_calls[-1][1]["initial_balance"], 0)
+
+    def test_account_edit_prefills_current_balance_and_adjusts(self):
+        tui.switch_tab(self.state, 1, self.api)
+        self.state.selected = 0
+        acc = self.state.items()[0]
+        self.assertEqual(acc["name"], "Tiền mặt")
+        # Current balance is 1,000,000
+        tui.handle_key(self.state, "e", self.api)
+        self.assertIsNotNone(self.state.form)
+        self.assertEqual(self.state.form.name, "account_edit")
+        self.assertEqual(self.state.form.values["balance"], "1.000.000")
+
+        # Edit to 2tr
+        self.state.form.values["balance"] = "2tr"
+        tui.submit(self.state, self.api)
+        self.assertIsNone(self.state.form)
+        edit_calls = [c for c in self.api.calls if c[0] == "account edit"]
+        self.assertEqual(len(edit_calls), 1)
+        self.assertEqual(edit_calls[0][1]["balance"], 2_000_000)
 
     def test_plan_done_form_and_balance_check(self):
         # Switch to Tab 3 (Dòng tiền)

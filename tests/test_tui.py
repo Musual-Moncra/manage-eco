@@ -979,6 +979,7 @@ class PixelPopupTest(unittest.TestCase):
         tui.dispatch(self.state, "4", self.api)  # keys dismiss the popup and still act
         tui.dispatch(self.state, "j", self.api)
         tui.dispatch(self.state, "d", self.api)
+        tui.dispatch(self.state, "enter", self.api)
         tui.dispatch(self.state, "3", self.api)
         tui.dispatch(self.state, "j", self.api)
         tui.dispatch(self.state, "e", self.api)
@@ -1452,6 +1453,7 @@ class SoundTest(unittest.TestCase):
         click(self.state, ("tab", 3), self.api)
         click(self.state, ("select", 0), self.api)
         click(self.state, ("key", "d"), self.api)
+        click(self.state, ("key", "enter"), self.api)
         click(self.state, ("tab", 2), self.api)
         click(self.state, ("select", 0), self.api)
         click(self.state, ("key", "x"), self.api)
@@ -1529,6 +1531,7 @@ class RealApiTest(unittest.TestCase):
         self.assertIn("10/11/2026", text(frame(state)))
         click(state, ("select", 0), call)
         click(state, ("key", "d"), call)
+        click(state, ("key", "enter"), call)
         self.assertEqual(state.balance, -1_000_000)
         click(state, ("tab", 2), call)
         click(state, ("select", 0), call)

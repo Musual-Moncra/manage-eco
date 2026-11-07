@@ -480,7 +480,8 @@ def goal_rm(params, store, today):
 def account_add(params, store, today):
     _require(params, "name")
     name = str(params["name"]).strip()
-    init_bal = _initial_amount(params.get("initial_balance"))
+    raw_bal = params.get("balance") if params.get("balance") is not None else params.get("initial_balance")
+    init_bal = _initial_amount(raw_bal) if raw_bal is not None else 0
     is_def = bool(params.get("default", False))
     a = Account(name, init_bal, is_def)
     aid = store.add_account(a)
@@ -497,18 +498,30 @@ def account_list(params, store, today):
 
 def account_edit(params, store, today):
     _require(params, "id")
-    aid = int(params["id"])
+    aid = _resolve_account_id(store, params["id"])
+    if aid is None:
+        raise LookupError("không tìm thấy tài khoản %s" % params["id"])
     a = store.get_account(aid)
     if a is None:
         raise LookupError("không tìm thấy tài khoản #%d" % aid)
     if _given(params, "name"):
         a.name = str(params["name"]).strip()
-    if _given(params, "initial_balance"):
+    if _given(params, "balance"):
+        target_bal = _initial_amount(params["balance"])
+        cur_bal = store.account_balance(aid)
+        diff = target_bal - cur_bal
+        a.initial_balance += diff
+    elif _given(params, "initial_balance"):
         a.initial_balance = _initial_amount(params["initial_balance"])
     if params.get("default") is not None:
         a.is_default = bool(params["default"])
     store.update_account(a)
     return {"account": account_dict(store.get_account(aid), store, today)}
+
+
+def account_set_balance(params, store, today):
+    _require(params, "id", "balance")
+    return account_edit(params, store, today)
 
 
 def account_rm(params, store, today):
@@ -629,6 +642,7 @@ COMMANDS = {
     "goal add": goal_add, "goal list": goal_list, "goal save": goal_save, "goal take": goal_take,
     "goal edit": goal_edit, "goal rm": goal_rm, "goal delete": goal_rm,
     "account add": account_add, "account list": account_list, "account edit": account_edit,
+    "account set-balance": account_set_balance,
     "account rm": account_rm, "account delete": account_rm, "account transfer": account_transfer,
     "account transfers": account_transfers, "account set-default": account_set_default,
     "dash": dash, "categories": categories, "sound": sound, "icons": icons,

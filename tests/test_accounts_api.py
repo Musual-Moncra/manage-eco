@@ -44,6 +44,31 @@ class AccountsApiTest(unittest.TestCase):
         bank_acc = next(a for a in lst["accounts"] if a["id"] == bank_id)
         self.assertTrue(bank_acc["is_default"])
 
+    def test_account_add_default_balance_zero(self):
+        # Adding account with no balance or empty balance defaults to 0
+        res = api.execute("account add", {"name": "Heo đất"}, self.store, self.today)
+        self.assertEqual(res["account"]["initial_balance"], 0)
+        self.assertEqual(res["account"]["balance"], 0)
+
+    def test_account_adjust_current_balance(self):
+        # Create account with 500k
+        res = api.execute("account add", {"name": "Ví phụ", "initial_balance": "500k"}, self.store, self.today)
+        aid = res["account"]["id"]
+
+        # Make an expense of 200k -> balance drops to 300k
+        api.execute("expense", {"amount": "200k", "account": aid}, self.store, self.today)
+        self.assertEqual(self.store.account_balance(aid), 300_000)
+
+        # Directly adjust balance to 1tr
+        res_edit = api.execute("account edit", {"id": aid, "balance": "1tr"}, self.store, self.today)
+        self.assertEqual(res_edit["account"]["balance"], 1_000_000)
+        self.assertEqual(self.store.account_balance(aid), 1_000_000)
+
+        # Adjust balance via set-balance command to 0
+        res_set = api.execute("account set-balance", {"id": aid, "balance": "0"}, self.store, self.today)
+        self.assertEqual(res_set["account"]["balance"], 0)
+        self.assertEqual(self.store.account_balance(aid), 0)
+
     def test_account_rm(self):
         res = api.execute("account add", {"name": "Tiền mặt", "initial_balance": "0"}, self.store, self.today)
         res2 = api.execute("account add", {"name": "Tạm", "initial_balance": "0"}, self.store, self.today)

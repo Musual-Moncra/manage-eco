@@ -162,10 +162,10 @@ FORMS = {
     "income": ("Thêm khoản thu", _TX_FIELDS),
     "tx": ("Sửa giao dịch", _TX_FIELDS + [Field("kind", "Loại", KINDS)]),
     "account_add": ("Thêm tài khoản", [Field("name", "Tên tài khoản", placeholder="vd: Tiền mặt, ZaloPay, MB Bank"),
-                                       Field("initial_balance", "Số dư ban đầu", placeholder="vd: 0, 1tr, 500k"),
+                                       Field("initial_balance", "Số dư ban đầu", placeholder="mặc định: 0 (vd: 500k, 1tr)"),
                                        Field("default", "Đặt mặc định", DEFAULT_CHOICES)]),
     "account_edit": ("Sửa tài khoản", [Field("name", "Tên tài khoản"),
-                                        Field("initial_balance", "Số dư ban đầu"),
+                                        Field("balance", "Số dư hiện tại", placeholder="nhập số dư thực tế"),
                                         Field("default", "Đặt mặc định", DEFAULT_CHOICES)]),
     "account_transfer": ("Chuyển tiền nội bộ", [Field("from", "Từ tài khoản", placeholder="tên tài khoản gửi"),
                                                 Field("to", "Đến tài khoản", placeholder="tên tài khoản nhận"),
@@ -1838,24 +1838,30 @@ def validate(form: Form, today: date) -> Tuple[str, Dict[str, Any], Dict[str, st
         if not v.get("name"):
             errors["name"] = "Nhập tên tài khoản"
         init_bal = 0
-        raw_bal = (v.get("initial_balance") or "").strip()
+        raw_bal = (v.get("balance") or v.get("initial_balance") or "").strip()
         if raw_bal:
             try:
                 init_bal = parse_money(raw_bal, allow_zero=True)
             except ValueError:
                 errors["initial_balance"] = "Số dư không hợp lệ (vd: 0, 1tr, 500k)"
+                errors["balance"] = "Số dư không hợp lệ (vd: 0, 1tr, 500k)"
         return "account add", {"name": v.get("name", ""), "initial_balance": init_bal, "default": v.get("default") == "1"}, errors
     if form.name == "account_edit":
         if not v.get("name"):
             errors["name"] = "Nhập tên tài khoản"
-        init_bal = 0
-        raw_bal = (v.get("initial_balance") or "").strip()
+        params = {"id": form.edit_id, "name": v.get("name", ""), "default": v.get("default") == "1"}
+        raw_bal = (v.get("balance") or v.get("initial_balance") or "").strip()
         if raw_bal:
             try:
-                init_bal = parse_money(raw_bal, allow_zero=True)
+                bal = parse_money(raw_bal, allow_zero=True)
+                if "balance" in v:
+                    params["balance"] = bal
+                else:
+                    params["initial_balance"] = bal
             except ValueError:
+                errors["balance"] = "Số dư không hợp lệ (vd: 0, 1tr, 500k)"
                 errors["initial_balance"] = "Số dư không hợp lệ (vd: 0, 1tr, 500k)"
-        return "account edit", {"id": form.edit_id, "name": v.get("name", ""), "initial_balance": init_bal, "default": v.get("default") == "1"}, errors
+        return "account edit", params, errors
     if form.name == "account_transfer":
         if not v.get("from"):
             errors["from"] = "Nhập tài khoản nguồn"
@@ -1981,7 +1987,7 @@ def open_edit(state: State, api: ApiCall) -> None:
         return
     if state.tab == 1:
         form = open_form(state, "account_edit", api)
-        form.values.update(name=item["name"], initial_balance=_amount_text(item["initial_balance"]),
+        form.values.update(name=item["name"], balance=_amount_text(item["balance"]),
                            default="1" if item.get("is_default") else "0")
         form.title = "Sửa tài khoản: %s" % item["name"]
         form.edit_id = item["id"]
@@ -2139,8 +2145,9 @@ def submit(state: State, api: ApiCall) -> None:
         a = result.get("account") or {}
         name = a.get("name", "")
         verb = "Đã sửa" if cmd == "account edit" else "Đã thêm"
-        celebrate(state, api, "%s tài khoản %s" % (verb, name), "save", "pencil" if cmd == "account edit" else "check",
-                  verb + "!", name)
+        bal_str = " (số dư: %s)" % money(a["balance"]) if "balance" in a else ""
+        celebrate(state, api, "%s tài khoản %s%s" % (verb, name, bal_str), "save", "pencil" if cmd == "account edit" else "check",
+                  verb + "!", "%s%s" % (name, bal_str))
         return
     if cmd == "account transfer":
         tr = result.get("transfer") or {}

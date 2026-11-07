@@ -129,10 +129,15 @@ def build_parser() -> argparse.ArgumentParser:
     s = asub.add_parser("list", help="liệt kê tài khoản")
 
     s = asub.add_parser("edit", help="sửa tài khoản")
-    s.add_argument("id", type=int)
+    s.add_argument("id")
     s.add_argument("--name")
+    s.add_argument("--balance", help="điều chỉnh số dư hiện tại về mức này")
     s.add_argument("--initial-balance")
     s.add_argument("--default", action="store_true", default=None)
+
+    s = asub.add_parser("set-balance", help="điều chỉnh số dư hiện tại của tài khoản")
+    s.add_argument("id")
+    s.add_argument("balance", help="số dư mới (vd: 2tr, 500k, 0)")
 
     s = asub.add_parser("rm", help="xoá tài khoản")
     s.add_argument("id", type=int)
