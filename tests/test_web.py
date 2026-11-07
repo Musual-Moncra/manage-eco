@@ -29,6 +29,20 @@ class WebServerTest(unittest.TestCase):
             urllib.request.urlopen(url)
         self.assertEqual(ctx.exception.code, 401)
 
+    def test_pin_lockout_after_5_failures(self):
+        # 5 consecutive failures should trigger temporary lockout
+        for _ in range(5):
+            url = f"http://127.0.0.1:{self.port}/api/data?pin=wrong"
+            try:
+                urllib.request.urlopen(url)
+            except urllib.error.HTTPError:
+                pass
+        # 6th request with correct PIN should now be rejected due to lockout
+        correct_url = f"http://127.0.0.1:{self.port}/api/data?pin=1234"
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            urllib.request.urlopen(correct_url)
+        self.assertEqual(ctx.exception.code, 401)
+
     def test_valid_pin_returns_json(self):
         url = f"http://127.0.0.1:{self.port}/api/data?pin=1234"
         with urllib.request.urlopen(url) as resp:

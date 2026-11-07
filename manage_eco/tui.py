@@ -465,6 +465,7 @@ class State:
             try:
                 from manage_eco.web import start_share_server
                 from manage_eco.tunnel import CloudflareTunnel
+                self.share_pin = f"{secrets.randbelow(9000) + 1000}"
                 store = getattr(self, "store", None)
                 if store is None:
                     from manage_eco.db import Store
@@ -876,7 +877,7 @@ def action_line(state: State, width: int) -> Line:
                    3: [("+ Dòng tiền", "+Dòng", "p", "p", False)],
                    4: [("+ Ngân sách", "+NS", "b", "b", False)],
                    5: [("+ Tạo hũ", "+Hũ", "goal_add", "+Hũ", False)],
-                   7: [("Bật/Tắt s", "Bật/Tắt", "s", "s", False), ("Sao chép c", "Chép", "c", "c", False)]}.get(
+                   7: [("Bật/Tắt", "Bật/Tắt", "s", "s", False), ("Sao chép", "Chép", "c", "c", False)]}.get(
             state.tab, [("+ Chi", "+Chi", "a", "a", False), ("+ Thu", "+Thu", "i", "i", False),
                         ("+ Dòng tiền", "+Dòng", "p", "p", False)])
         item = selected_item(state)
@@ -1744,22 +1745,16 @@ def share_tab_lines(state: State, width: int, height: int) -> List[Line]:
         if tunnel_url:
             l_sub.add("   (Đã bật HTTPS Cloudflare cho 4G từ xa)", MUTED)
         else:
-            l_sub.add(f"   (Wi-Fi nội bộ: {local_url})", MUTED)
+            l_sub.add(f"   (Wi-Fi nội bộ: {local_url} · Cài 'brew install cloudflared' để mở 4G từ xa)", MUTED)
         out.append(l_sub)
-        out.append(Line())
-
-        # 3. QR Code
-        qr_lines = generate_terminal_qr(active_url)
-        for ql in qr_lines:
-            out.append(Line().add("   " + ql, ACCENT))
         out.append(Line())
     else:
         out.append(Line().add("   Chia sẻ thông tin tài chính (Tổng quan, Hũ, Ngân sách...) cho bạn gái xem", MUTED))
         out.append(Line().add("   trên điện thoại qua 4G/Wi-Fi ở chế độ chỉ đọc (View-only an toàn tuyệt đối).", MUTED))
         out.append(Line())
 
-    # 4. Tab Whitelist Permissions
-    out.append(Line().add("   CÁC TAB ĐƯỢC PHÉP XEM TRÊN WEB (nhấp để chọn):", "bold " + ACCENT))
+    # 3. Tab Whitelist Permissions
+    out.append(Line().add("   CÁC TAB ĐƯỢC PHÉP XEM TRÊN WEB (bấm số 1-7 hoặc nhấp chuột):", "bold " + ACCENT))
     share_items = [
         ("overview", "1.Tổng quan"),
         ("accounts", "2.Tài khoản"),
@@ -1786,7 +1781,7 @@ def share_tab_lines(state: State, width: int, height: int) -> List[Line]:
     out.append(l_c2)
     out.append(Line())
 
-    # 5. Sync Mode
+    # 4. Sync Mode
     out.append(Line().add("   CHẾ ĐỘ ĐỒNG BỘ HIỂN THỊ:", "bold " + ACCENT))
     is_free = state.share_sync_mode == "free"
     l_sync = Line().add("   ")
@@ -1794,6 +1789,15 @@ def share_tab_lines(state: State, width: int, height: int) -> List[Line]:
     l_sync.add("  ")
     l_sync.click("[Đi cùng tôi (Follow Me)]", ("set_share_sync_mode", "follow"), CHIP_ON if not is_free else CHIP)
     out.append(l_sync)
+    out.append(Line())
+
+    # 5. QR Code (shown when active)
+    if state.share_active:
+        out.append(Line().add("   QUÉT MÃ QR ĐỂ MỞ TRÊN ĐIỆN THOẠI:", "bold " + ACCENT))
+        qr_lines = generate_terminal_qr(active_url)
+        for ql in qr_lines:
+            out.append(Line().add("   " + ql, ACCENT))
+        out.append(Line())
 
     return out
 
@@ -2484,6 +2488,16 @@ def handle_key(state: State, key: str, api: ApiCall) -> None:
     items = state.items()
     if key in ("q", "ctrl-c"):
         state.running = False
+    elif state.tab == 7 and key in ("s", "enter", " "):
+        state.toggle_share()
+    elif state.tab == 7 and key in ("1", "2", "3", "4", "5", "6", "7"):
+        idx = int(key) - 1
+        if idx < len(TAB_KEY_BY_INDEX):
+            state.toggle_share_tab(TAB_KEY_BY_INDEX[idx])
+    elif state.tab == 7 and key == "m":
+        state.set_share_sync_mode("follow" if state.share_sync_mode == "free" else "free")
+    elif state.tab == 7 and key == "c":
+        copy_share_url(state)
     elif key in [str(i + 1) for i in range(len(TABS))]:
         switch_tab(state, int(key) - 1, api)
     elif key == "tab":
@@ -2524,16 +2538,6 @@ def handle_key(state: State, key: str, api: ApiCall) -> None:
         open_account_add(state, api)
     elif key == "account_transfer" or (key == "t" and state.tab == 1):
         open_account_transfer(state, api)
-    elif state.tab == 7 and key in ("s", "enter", " "):
-        state.toggle_share()
-    elif state.tab == 7 and key in ("1", "2", "3", "4", "5", "6", "7"):
-        idx = int(key) - 1
-        if idx < len(TAB_KEY_BY_INDEX):
-            state.toggle_share_tab(TAB_KEY_BY_INDEX[idx])
-    elif state.tab == 7 and key == "m":
-        state.set_share_sync_mode("follow" if state.share_sync_mode == "free" else "free")
-    elif state.tab == 7 and key == "c":
-        copy_share_url(state)
     elif key == "s":
         state.settings = True
     elif key in ("[", "]") and state.tab in (2, 4):

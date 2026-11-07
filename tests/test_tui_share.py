@@ -26,6 +26,16 @@ class TuiShareTest(unittest.TestCase):
         plain = "\n".join(l.plain for l in f.lines)
         self.assertIn("Chia sẻ", plain)
         self.assertIn("Tổng quan", plain)
+        self.assertIn("Tự do duyệt", plain)
+
+    def test_render_tab_8_active_controls_visible_at_24_height(self):
+        self.state.tab = 7
+        self.state.toggle_share()
+        f = tui.build_frame(self.state, 80, 24)
+        plain = "\n".join(l.plain for l in f.lines)
+        self.assertIn("Đường link", plain)
+        self.assertIn("Tự do duyệt", plain)
+        self.assertIn("Tổng quan", plain)
 
     def test_toggle_sharing(self):
         self.assertFalse(self.state.share_active)
@@ -41,6 +51,13 @@ class TuiShareTest(unittest.TestCase):
         self.assertNotIn("overview", self.state.share_allowed_tabs)
         self.state.toggle_share_tab("overview")
         self.assertIn("overview", self.state.share_allowed_tabs)
+
+    def test_tab_8_numeric_keys_toggle_permissions(self):
+        self.state.tab = 7  # Tab 8
+        self.assertIn("overview", self.state.share_allowed_tabs)
+        tui.handle_key(self.state, "1", lambda cmd, p: {})
+        self.assertEqual(self.state.tab, 7)  # Did not switch tab to 0!
+        self.assertNotIn("overview", self.state.share_allowed_tabs)  # Toggled!
 
     def test_set_sync_mode(self):
         self.assertEqual(self.state.share_sync_mode, "free")

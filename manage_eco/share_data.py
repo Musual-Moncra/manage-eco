@@ -45,7 +45,18 @@ def get_shared_snapshot(
     tabs_data: Dict[str, Any] = {}
 
     if "overview" in allowed_tabs:
-        tabs_data["overview"] = api.execute("dash", {}, store, today)
+        dash_data = dict(api.execute("dash", {}, store, today))
+        if "accounts" not in allowed_tabs:
+            dash_data.pop("accounts", None)
+        if "cashflow" not in allowed_tabs:
+            dash_data.pop("upcoming", None)
+            dash_data.pop("overdue", None)
+            dash_data.pop("lowest", None)
+        if "budgets" not in allowed_tabs:
+            dash_data.pop("budgets", None)
+        if "goals" not in allowed_tabs:
+            dash_data.pop("goals", None)
+        tabs_data["overview"] = dash_data
 
     if "accounts" in allowed_tabs:
         tabs_data["accounts"] = api.execute("account list", {}, store, today)

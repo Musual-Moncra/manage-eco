@@ -6,6 +6,7 @@ import json
 import queue
 import secrets
 import threading
+import time
 from datetime import date
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -38,6 +39,8 @@ class ShareServer:
 
         self._lock = threading.Lock()
         self._clients: List[queue.Queue] = []
+        self._failed_attempts = 0
+        self._locked_until = 0.0
         self._running = False
         self._server: Optional[ThreadingHTTPServer] = None
         self._thread: Optional[threading.Thread] = None
@@ -57,12 +60,22 @@ class ShareServer:
                 def handle(self) -> None:
                     try:
                         super().handle()
-                    except (BrokenPipeError, ConnectionResetError):
+                    except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
                         pass
 
                 def _verify_pin(self, query_params: Dict[str, List[str]]) -> bool:
-                    provided = query_params.get("pin", [""])[0]
-                    return secrets.compare_digest(provided, server_self.pin)
+                    with server_self._lock:
+                        now = time.monotonic()
+                        if now < server_self._locked_until:
+                            return False
+                        provided = query_params.get("pin", [""])[0]
+                        if secrets.compare_digest(provided, server_self.pin):
+                            server_self._failed_attempts = 0
+                            return True
+                        server_self._failed_attempts += 1
+                        if server_self._failed_attempts >= 5:
+                            server_self._locked_until = now + 60.0
+                        return False
 
                 def do_GET(self) -> None:
                     parsed = urlparse(self.path)
@@ -115,7 +128,7 @@ class ShareServer:
 
                             while server_self._running:
                                 try:
-                                    event = q.get(timeout=1.0)
+                                    event = q.get(timeout=10.0)
                                     ev_type = event.get("type", "update")
                                     ev_data = json.dumps(event.get("data", {}), ensure_ascii=False)
                                     msg = f"event: {ev_type}\ndata: {ev_data}\n\n".encode("utf-8")
@@ -125,7 +138,7 @@ class ShareServer:
                                     # Send keep-alive comment
                                     self.wfile.write(b": keepalive\n\n")
                                     self.wfile.flush()
-                        except (BrokenPipeError, ConnectionResetError):
+                        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
                             pass
                         finally:
                             server_self._remove_client(q)

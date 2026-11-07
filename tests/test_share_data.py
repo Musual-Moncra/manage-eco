@@ -26,6 +26,16 @@ class ShareDataTest(unittest.TestCase):
         self.assertEqual(snap["sync_mode"], "free")
         self.assertEqual(snap["allowed_tab_keys"], sorted(list(allowed)))
 
+    def test_overview_sanitizes_unshared_subtabs(self):
+        # Even if overview is allowed, unshared sub-data (accounts, cashflow, budgets, goals) must not leak
+        snap = get_shared_snapshot(self.store, self.today, allowed_tabs={"overview"})
+        overview = snap["tabs"]["overview"]
+        self.assertNotIn("accounts", overview)
+        self.assertNotIn("upcoming", overview)
+        self.assertNotIn("overdue", overview)
+        self.assertNotIn("budgets", overview)
+        self.assertNotIn("goals", overview)
+
     def test_all_tabs_data(self):
         snap = get_shared_snapshot(self.store, self.today, set(ALL_SHAREABLE_TABS.keys()), active_tab="goals", sync_mode="follow")
         tabs = snap["tabs"]

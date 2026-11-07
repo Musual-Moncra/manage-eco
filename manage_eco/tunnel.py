@@ -5,6 +5,8 @@ Never imports rich. Pure standard library (socket, subprocess, re, typing).
 import re
 import socket
 import subprocess
+import threading
+import time
 from typing import List, Optional, Tuple
 
 
@@ -262,19 +264,22 @@ def generate_terminal_qr(text: str) -> List[str]:
 
 
 class CloudflareTunnel:
-    """Manages an external cloudflared quick tunnel subprocess."""
+    """Manages an external cloudflared quick tunnel subprocess without blocking."""
 
     def __init__(self) -> None:
         self.proc: Optional[subprocess.Popen] = None
         self.url: Optional[str] = None
+        self._thread: Optional[threading.Thread] = None
+        self._stop_event = threading.Event()
 
-    def start(self, local_port: int) -> Optional[str]:
+    def start(self, local_port: int, wait_seconds: float = 0.5) -> Optional[str]:
         if self.is_running():
             return self.url
         try:
+            self._stop_event.clear()
             self.proc = subprocess.Popen(
                 ["cloudflared", "tunnel", "--url", f"http://127.0.0.1:{local_port}"],
-                stdout=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
                 text=True,
             )
@@ -282,22 +287,36 @@ class CloudflareTunnel:
             self.proc = None
             return None
 
-        # Read stderr/stdout for public URL
-        url_pattern = re.compile(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com")
-        for _ in range(30):
-            if self.proc.poll() is not None:
+        self._start_reader_thread()
+        # Brief initial wait (e.g. 0.5s) in case it connects immediately
+        t0 = time.monotonic()
+        while time.monotonic() - t0 < wait_seconds:
+            if self.url or (self.proc and self.proc.poll() is not None):
                 break
-            line = self.proc.stderr.readline() if self.proc.stderr else ""
-            m = url_pattern.search(line)
-            if m:
-                self.url = m.group(0)
-                return self.url
-        return None
+            time.sleep(0.05)
+        return self.url
+
+    def _start_reader_thread(self) -> None:
+        def _read() -> None:
+            url_pattern = re.compile(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com")
+            if not self.proc or not self.proc.stderr:
+                return
+            for line in self.proc.stderr:
+                if self._stop_event.is_set():
+                    break
+                m = url_pattern.search(line)
+                if m:
+                    self.url = m.group(0)
+                    break
+
+        self._thread = threading.Thread(target=_read, daemon=True)
+        self._thread.start()
 
     def is_running(self) -> bool:
         return self.proc is not None and self.proc.poll() is None
 
     def stop(self) -> None:
+        self._stop_event.set()
         if self.proc:
             try:
                 self.proc.terminate()
