@@ -65,7 +65,7 @@ def default_path() -> str:
 
 class Store:
     def __init__(self, path: Optional[str] = None):
-        self.conn = sqlite3.connect(path or default_path())
+        self.conn = sqlite3.connect(path or default_path(), check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
         cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(plans)")}
