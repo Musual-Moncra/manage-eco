@@ -77,13 +77,7 @@ def _initial_amount(v: Any) -> int:
         if v < 0:
             raise ValueError("số dư ban đầu phải >= 0")
         return v
-    s = str(v).strip()
-    if s == "0":
-        return 0
-    val = parse_money(s)
-    if val < 0:
-        raise ValueError("số dư ban đầu phải >= 0")
-    return val
+    return parse_money(str(v).strip(), allow_zero=True)
 
 
 def _resolve_account_id(store, acc_val: Any) -> Optional[int]:

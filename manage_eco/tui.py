@@ -1831,9 +1831,10 @@ def validate(form: Form, today: date) -> Tuple[str, Dict[str, Any], Dict[str, st
         if not v.get("name"):
             errors["name"] = "Nhập tên tài khoản"
         init_bal = 0
-        if v.get("initial_balance"):
+        raw_bal = (v.get("initial_balance") or "").strip()
+        if raw_bal:
             try:
-                init_bal = parse_money(v["initial_balance"])
+                init_bal = parse_money(raw_bal, allow_zero=True)
             except ValueError:
                 errors["initial_balance"] = "Số dư không hợp lệ (vd: 0, 1tr, 500k)"
         return "account add", {"name": v.get("name", ""), "initial_balance": init_bal, "default": v.get("default") == "1"}, errors
@@ -1841,9 +1842,10 @@ def validate(form: Form, today: date) -> Tuple[str, Dict[str, Any], Dict[str, st
         if not v.get("name"):
             errors["name"] = "Nhập tên tài khoản"
         init_bal = 0
-        if v.get("initial_balance"):
+        raw_bal = (v.get("initial_balance") or "").strip()
+        if raw_bal:
             try:
-                init_bal = parse_money(v["initial_balance"])
+                init_bal = parse_money(raw_bal, allow_zero=True)
             except ValueError:
                 errors["initial_balance"] = "Số dư không hợp lệ (vd: 0, 1tr, 500k)"
         return "account edit", {"id": form.edit_id, "name": v.get("name", ""), "initial_balance": init_bal, "default": v.get("default") == "1"}, errors

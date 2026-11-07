@@ -118,6 +118,16 @@ class AccountsTuiTest(unittest.TestCase):
         # Prefilled with default account "Tiền mặt"
         self.assertEqual(form.values.get("account"), "Tiền mặt")
 
+    def test_account_initial_balance_zero_allowed(self):
+        tui.switch_tab(self.state, 1, self.api)
+        tui.open_account_add(self.state, self.api)
+        self.state.form.values["name"] = "Ví Mới"
+        self.state.form.values["initial_balance"] = "0"
+        tui.submit(self.state, self.api)
+        self.assertEqual(self.state.form, None)
+        add_calls = [c for c in self.api.calls if c[0] == "account add"]
+        self.assertEqual(add_calls[-1][1]["initial_balance"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

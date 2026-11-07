@@ -147,7 +147,7 @@ def _tokenize_money(s: str) -> List[Token]:
     return tokens
 
 
-def _eval_money_tokens(tokens: List[Token]) -> int:
+def _eval_money_tokens(tokens: List[Token], allow_zero: bool = False) -> int:
     has_op = any(tok[0] == "OP" for tok in tokens)
     if not has_op and any(tok[2] for tok in tokens if tok[0] == "NUM"):
         raise ValueError("Bare decimal without unit is not valid VND")
@@ -211,15 +211,19 @@ def _eval_money_tokens(tokens: List[Token]) -> int:
         raise ValueError("Trailing tokens in money expression")
 
     result = int(round(result_float))
-    if result <= 0:
-        raise ValueError(f"Amount must be > 0 (got {result})")
+    if allow_zero:
+        if result < 0:
+            raise ValueError(f"Amount must be >= 0 (got {result})")
+    else:
+        if result <= 0:
+            raise ValueError(f"Amount must be > 0 (got {result})")
     return result
 
 
-def parse_money(s: str) -> int:
-    """Parse a human-friendly VND string or arithmetic expression into a positive integer amount."""
+def parse_money(s: str, allow_zero: bool = False) -> int:
+    """Parse a human-friendly VND string or arithmetic expression into a positive integer amount (or >= 0 if allow_zero)."""
     tokens = _tokenize_money(s)
-    return _eval_money_tokens(tokens)
+    return _eval_money_tokens(tokens, allow_zero=allow_zero)
 
 
 def money_preview(s: str) -> Optional[str]:
