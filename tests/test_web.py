@@ -72,3 +72,40 @@ class WebServerTest(unittest.TestCase):
         chunk = resp.fp.readline().decode()
         self.assertTrue(chunk.startswith(":") or chunk.startswith("event:"))
         conn.close()
+
+    def test_action_endpoint_verifies_pin(self):
+        url = f"http://127.0.0.1:{self.port}/api/action?pin=wrong"
+        payload = json.dumps({"action": "expense", "params": {"amount": "50k"}}).encode("utf-8")
+        req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            urllib.request.urlopen(req)
+        self.assertEqual(ctx.exception.code, 401)
+
+    def test_action_endpoint_forbidden_without_permission(self):
+        # Server default allowed_edits is {"expense"}. "cashflow" is not permitted.
+        url = f"http://127.0.0.1:{self.port}/api/action?pin=1234"
+        payload = json.dumps({"action": "plan_done", "params": {"id": 1}}).encode("utf-8")
+        req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            urllib.request.urlopen(req)
+        self.assertEqual(ctx.exception.code, 403)
+
+    def test_action_endpoint_executes_expense_when_permitted(self):
+        url = f"http://127.0.0.1:{self.port}/api/action?pin=1234"
+        payload = json.dumps({"action": "expense", "params": {"amount": "50k", "category": "food", "note": "cafe"}}).encode("utf-8")
+        req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(req) as resp:
+            data = json.loads(resp.read().decode())
+        self.assertEqual(resp.status, 200)
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["command"], "expense")
+
+    def test_action_endpoint_triggers_on_mutation_callback(self):
+        mutated = []
+        self.server.on_mutation = lambda: mutated.append(True)
+        url = f"http://127.0.0.1:{self.port}/api/action?pin=1234"
+        payload = json.dumps({"action": "expense", "params": {"amount": "20k", "category": "other"}}).encode("utf-8")
+        req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(req):
+            pass
+        self.assertEqual(len(mutated), 1)

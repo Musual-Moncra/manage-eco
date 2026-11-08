@@ -10,7 +10,7 @@ import time
 from datetime import date
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Callable, Dict, List, Optional, Set
 from urllib.parse import parse_qs, urlparse
 
 from manage_eco.share_data import ALL_SHAREABLE_TABS, get_shared_snapshot
@@ -28,6 +28,8 @@ class ShareServer:
         allowed_tabs: Optional[Set[str]] = None,
         active_tab: str = "overview",
         sync_mode: str = "free",
+        allowed_edits: Optional[Set[str]] = None,
+        on_mutation: Optional[Callable[[], None]] = None,
     ):
         self.store = store
         self.today = today
@@ -36,6 +38,8 @@ class ShareServer:
         self.allowed_tabs: Set[str] = set(allowed_tabs if allowed_tabs is not None else DEFAULT_ALLOWED_TABS)
         self.active_tab: str = active_tab
         self.sync_mode: str = sync_mode
+        self.allowed_edits: Set[str] = set(allowed_edits if allowed_edits is not None else {"expense"})
+        self.on_mutation = on_mutation
 
         self._lock = threading.Lock()
         self._clients: List[queue.Queue] = []
@@ -152,6 +156,89 @@ class ShareServer:
 
                     self.send_error(HTTPStatus.NOT_FOUND, "Not Found")
 
+                def do_POST(self) -> None:
+                    parsed = urlparse(self.path)
+                    params = parse_qs(parsed.query)
+
+                    if parsed.path == "/api/action":
+                        if not self._verify_pin(params):
+                            self.send_error(HTTPStatus.UNAUTHORIZED, "Invalid or missing PIN")
+                            return
+
+                        content_len = int(self.headers.get("Content-Length", 0))
+                        body_bytes = self.rfile.read(content_len)
+                        try:
+                            payload = json.loads(body_bytes.decode("utf-8"))
+                        except Exception:
+                            self.send_error(HTTPStatus.BAD_REQUEST, "Invalid JSON payload")
+                            return
+
+                        action = payload.get("action")
+                        action_params = payload.get("params", {})
+
+                        with server_self._lock:
+                            allowed = set(server_self.allowed_edits)
+
+                        perm_map = {
+                            "expense": "expense",
+                            "income": "expense",
+                            "plan_done": "cashflow",
+                            "goal_save": "goals",
+                            "tx_delete": "edit_tx",
+                        }
+
+                        required_perm = perm_map.get(action)
+                        if not required_perm or required_perm not in allowed:
+                            self.send_response(HTTPStatus.FORBIDDEN)
+                            self.send_header("Content-Type", "application/json; charset=utf-8")
+                            resp_body = json.dumps({
+                                "ok": False,
+                                "error": f"Hành động '{action}' chưa được cấp quyền từ máy tính"
+                            }, ensure_ascii=False).encode("utf-8")
+                            self.send_header("Content-Length", str(len(resp_body)))
+                            self.end_headers()
+                            self.wfile.write(resp_body)
+                            return
+
+                        cmd_map = {
+                            "expense": "expense",
+                            "income": "income",
+                            "plan_done": "plan done",
+                            "goal_save": "goal save",
+                            "tx_delete": "rm",
+                        }
+                        cmd = cmd_map[action]
+
+                        try:
+                            from manage_eco import api
+                            res = api.execute(cmd, action_params, server_self.store, server_self.today)
+                        except Exception as exc:
+                            self.send_response(HTTPStatus.BAD_REQUEST)
+                            self.send_header("Content-Type", "application/json; charset=utf-8")
+                            resp_body = json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False).encode("utf-8")
+                            self.send_header("Content-Length", str(len(resp_body)))
+                            self.end_headers()
+                            self.wfile.write(resp_body)
+                            return
+
+                        server_self.broadcast_update()
+
+                        if server_self.on_mutation:
+                            try:
+                                server_self.on_mutation()
+                            except Exception:
+                                pass
+
+                        resp_body = json.dumps({"ok": True, "command": cmd, "data": res}, ensure_ascii=False).encode("utf-8")
+                        self.send_response(HTTPStatus.OK)
+                        self.send_header("Content-Type", "application/json; charset=utf-8")
+                        self.send_header("Content-Length", str(len(resp_body)))
+                        self.end_headers()
+                        self.wfile.write(resp_body)
+                        return
+
+                    self.send_error(HTTPStatus.NOT_FOUND, "Not Found")
+
             self._server = ThreadingHTTPServer(("0.0.0.0", self.requested_port), RequestHandler)
             self.port = self._server.server_address[1]
             self._running = True
@@ -196,6 +283,7 @@ class ShareServer:
                 self.allowed_tabs,
                 active_tab=self.active_tab,
                 sync_mode=self.sync_mode,
+                allowed_edits=self.allowed_edits,
             )
 
     def update_config(
@@ -203,6 +291,7 @@ class ShareServer:
         allowed_tabs: Optional[Set[str]] = None,
         active_tab: Optional[str] = None,
         sync_mode: Optional[str] = None,
+        allowed_edits: Optional[Set[str]] = None,
     ) -> None:
         with self._lock:
             if allowed_tabs is not None:
@@ -211,7 +300,12 @@ class ShareServer:
                 self.active_tab = active_tab
             if sync_mode is not None:
                 self.sync_mode = sync_mode
+            if allowed_edits is not None:
+                self.allowed_edits = set(allowed_edits)
         self.notify_change("config_changed")
+
+    def broadcast_update(self) -> None:
+        self.notify_change("update")
 
     def notify_change(self, event_type: str = "update") -> None:
         snap = self.get_snapshot()
@@ -931,6 +1025,8 @@ def start_share_server(
     allowed_tabs: Optional[Set[str]] = None,
     active_tab: str = "overview",
     sync_mode: str = "free",
+    allowed_edits: Optional[Set[str]] = None,
+    on_mutation: Optional[Callable[[], None]] = None,
 ) -> ShareServer:
     server = ShareServer(
         store=store,
@@ -940,5 +1036,7 @@ def start_share_server(
         allowed_tabs=allowed_tabs,
         active_tab=active_tab,
         sync_mode=sync_mode,
+        allowed_edits=allowed_edits,
+        on_mutation=on_mutation,
     )
     return server.start()
