@@ -450,6 +450,14 @@ class State:
         self.share_pin = f"{secrets.randbelow(9000) + 1000}"
         self.share_allowed_tabs = {"overview", "cashflow", "budgets", "goals", "chart"}
         self.share_sync_mode = "free"
+        self.share_allowed_edits = {"expense"}
+
+    def _on_remote_mutation(self) -> None:
+        self.dirty = True
+        try:
+            play(self, "save")
+        except Exception:
+            pass
 
     def toggle_share(self) -> None:
         if self.share_active:
@@ -480,6 +488,8 @@ class State:
                     allowed_tabs=self.share_allowed_tabs,
                     active_tab=cur_tab_key,
                     sync_mode=self.share_sync_mode,
+                    allowed_edits=self.share_allowed_edits,
+                    on_mutation=self._on_remote_mutation,
                 )
                 self.share_tunnel = create_tunnel()
                 self.share_tunnel.start(self.share_server.port)
@@ -495,6 +505,14 @@ class State:
             self.share_allowed_tabs.add(tab_key)
         if self.share_server:
             self.share_server.update_config(allowed_tabs=self.share_allowed_tabs)
+
+    def toggle_share_edit(self, edit_key: str) -> None:
+        if edit_key in self.share_allowed_edits:
+            self.share_allowed_edits.remove(edit_key)
+        else:
+            self.share_allowed_edits.add(edit_key)
+        if self.share_server:
+            self.share_server.update_config(allowed_edits=self.share_allowed_edits)
 
     def set_share_sync_mode(self, mode: str) -> None:
         self.share_sync_mode = mode
@@ -1782,7 +1800,24 @@ def share_tab_lines(state: State, width: int, height: int) -> List[Line]:
     out.append(l_c2)
     out.append(Line())
 
-    # 4. Sync Mode
+    # 4. Action / Edit Permissions
+    out.append(Line().add("   CÁC QUYỀN ĐƯỢC PHÉP CHỈNH SỬA TRÊN WEB (nhấp chuột hoặc phím a, d, g, x):", "bold " + ACCENT))
+    edit_items = [
+        ("expense", "Ghi chi tiêu a"),
+        ("cashflow", "Xong dòng d"),
+        ("goals", "Góp hũ g"),
+        ("edit_tx", "Xoá gd x"),
+    ]
+    l_edits = Line().add("   ")
+    for key, label in edit_items:
+        is_on = key in state.share_allowed_edits
+        mark = "✓" if is_on else " "
+        style = CHIP_ON if is_on else CHIP
+        l_edits.click(f"[{mark} {label}]", ("toggle_share_edit", key), style).add(" ")
+    out.append(l_edits)
+    out.append(Line())
+
+    # 5. Sync Mode
     out.append(Line().add("   CHẾ ĐỘ ĐỒNG BỘ HIỂN THỊ:", "bold " + ACCENT))
     is_free = state.share_sync_mode == "free"
     l_sync = Line().add("   ")
@@ -2497,6 +2532,14 @@ def handle_key(state: State, key: str, api: ApiCall) -> None:
             state.toggle_share_tab(TAB_KEY_BY_INDEX[idx])
     elif state.tab == 7 and key == "m":
         state.set_share_sync_mode("follow" if state.share_sync_mode == "free" else "free")
+    elif state.tab == 7 and key == "a":
+        state.toggle_share_edit("expense")
+    elif state.tab == 7 and key == "d":
+        state.toggle_share_edit("cashflow")
+    elif state.tab == 7 and key == "g":
+        state.toggle_share_edit("goals")
+    elif state.tab == 7 and key == "x":
+        state.toggle_share_edit("edit_tx")
     elif state.tab == 7 and key == "c":
         copy_share_url(state)
     elif key in [str(i + 1) for i in range(len(TABS))]:
@@ -2598,7 +2641,7 @@ def handle_key(state: State, key: str, api: ApiCall) -> None:
 
 
 _CLICK_SOUND = ("key", "chip", "cal", "month", "plans", "chartset", "chart_jump", "set",
-                "toggle_share", "toggle_share_tab", "set_share_sync_mode", "copy_share_url")
+                "toggle_share", "toggle_share_tab", "toggle_share_edit", "set_share_sync_mode", "copy_share_url")
 
 
 def handle_click(state: State, x: int, y: int, api: ApiCall) -> None:
@@ -2643,6 +2686,8 @@ def handle_click(state: State, x: int, y: int, api: ApiCall) -> None:
         state.toggle_share()
     elif kind == "toggle_share_tab":
         state.toggle_share_tab(action[1])
+    elif kind == "toggle_share_edit":
+        state.toggle_share_edit(action[1])
     elif kind == "set_share_sync_mode":
         state.set_share_sync_mode(action[1])
     elif kind == "copy_share_url":

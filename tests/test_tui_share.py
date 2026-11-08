@@ -63,3 +63,24 @@ class TuiShareTest(unittest.TestCase):
         self.assertEqual(self.state.share_sync_mode, "free")
         self.state.set_share_sync_mode("follow")
         self.assertEqual(self.state.share_sync_mode, "follow")
+
+    def test_tab_8_edit_permission_toggles(self):
+        self.state.tab = 7  # Tab 8
+        self.assertIn("expense", self.state.share_allowed_edits)
+        # Toggle 'a' for expense
+        tui.handle_key(self.state, "a", lambda cmd, p: {})
+        self.assertNotIn("expense", self.state.share_allowed_edits)
+        tui.handle_key(self.state, "a", lambda cmd, p: {})
+        self.assertIn("expense", self.state.share_allowed_edits)
+        # Toggle 'd' for cashflow
+        tui.handle_key(self.state, "d", lambda cmd, p: {})
+        self.assertIn("cashflow", self.state.share_allowed_edits)
+        tui.handle_key(self.state, "d", lambda cmd, p: {})
+        self.assertNotIn("cashflow", self.state.share_allowed_edits)
+
+    def test_tab_8_renders_edit_permission_chips(self):
+        self.state.tab = 7
+        f = tui.build_frame(self.state, 80, 24)
+        plain = "\n".join(l.plain for l in f.lines)
+        self.assertIn("Ghi chi tiêu a", plain)
+        self.assertIn("Xong dòng d", plain)
