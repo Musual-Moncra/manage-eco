@@ -17,6 +17,13 @@ ALL_SHAREABLE_TABS: Dict[str, str] = {
     "chart": "Biểu đồ",
 }
 
+ALL_ACTION_PERMISSIONS: Dict[str, str] = {
+    "expense": "Ghi chi tiêu",
+    "cashflow": "Xong dòng tiền",
+    "goals": "Góp vào hũ",
+    "edit_tx": "Sửa/Xoá giao dịch",
+}
+
 TAB_KEY_BY_INDEX: List[str] = [
     "overview",
     "accounts",
@@ -36,6 +43,7 @@ def get_shared_snapshot(
     allowed_tabs: Set[str],
     active_tab: str = "overview",
     sync_mode: str = "free",
+    allowed_edits: Optional[Set[str]] = None,
 ) -> Dict[str, Any]:
     """Serialize and return data snapshot only for tabs in allowed_tabs whitelist.
 
@@ -76,6 +84,7 @@ def get_shared_snapshot(
     if "chart" in allowed_tabs:
         tabs_data["chart"] = api.execute("history", {"days": 30, "ahead": 30}, store, today)
 
+    edits_set = allowed_edits or set()
     return {
         "today": today.isoformat(),
         "month": month_str,
@@ -83,5 +92,7 @@ def get_shared_snapshot(
         "sync_mode": sync_mode,
         "allowed_tab_keys": sorted(list(allowed_tabs)),
         "tab_labels": {k: ALL_SHAREABLE_TABS[k] for k in allowed_tabs if k in ALL_SHAREABLE_TABS},
+        "allowed_edits": sorted(list(edits_set)),
+        "action_labels": {k: ALL_ACTION_PERMISSIONS[k] for k in edits_set if k in ALL_ACTION_PERMISSIONS},
         "tabs": tabs_data,
     }

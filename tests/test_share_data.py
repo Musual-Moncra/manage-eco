@@ -52,3 +52,12 @@ class ShareDataTest(unittest.TestCase):
         self.assertEqual(tabs["budgets"]["budgets"][0]["category"], "food")
         self.assertEqual(tabs["goals"]["goals"][0]["name"], "Du lich")
         self.assertEqual(tabs["cashflow"]["plans"][0]["name"], "Tien phong")
+
+    def test_snapshot_includes_allowed_edits(self):
+        from manage_eco.share_data import ALL_ACTION_PERMISSIONS
+        self.assertIn("expense", ALL_ACTION_PERMISSIONS)
+        self.assertIn("cashflow", ALL_ACTION_PERMISSIONS)
+        self.assertIn("goals", ALL_ACTION_PERMISSIONS)
+        self.assertIn("edit_tx", ALL_ACTION_PERMISSIONS)
+        snap = get_shared_snapshot(self.store, self.today, allowed_tabs={"overview"}, allowed_edits={"expense", "goals"})
+        self.assertEqual(snap["allowed_edits"], ["expense", "goals"])
