@@ -85,6 +85,10 @@ def get_shared_snapshot(
         tabs_data["chart"] = api.execute("history", {"days": 30, "ahead": 30}, store, today)
 
     edits_set = allowed_edits or set()
+    accounts_info = []
+    if "expense" in edits_set and hasattr(store, "list_accounts"):
+        accounts_info = [{"id": a.id, "name": a.name, "is_default": a.is_default} for a in store.list_accounts()]
+
     return {
         "today": today.isoformat(),
         "month": month_str,
@@ -94,5 +98,6 @@ def get_shared_snapshot(
         "tab_labels": {k: ALL_SHAREABLE_TABS[k] for k in allowed_tabs if k in ALL_SHAREABLE_TABS},
         "allowed_edits": sorted(list(edits_set)),
         "action_labels": {k: ALL_ACTION_PERMISSIONS[k] for k in edits_set if k in ALL_ACTION_PERMISSIONS},
+        "accounts": accounts_info,
         "tabs": tabs_data,
     }

@@ -10,6 +10,7 @@ import shutil
 import struct
 import subprocess
 import sys
+import threading
 import time
 import wave
 from typing import Dict, List, Optional, Tuple
@@ -30,6 +31,7 @@ _NOTES = {
 
 _SQUARE = {"error"}  # buzzier timbre
 
+_lock = threading.Lock()
 _last = {}  # type: Dict[str, float]
 _procs = []  # type: List[subprocess.Popen]
 
@@ -98,23 +100,24 @@ def play(event: str, enabled: bool = True) -> bool:
     if not enabled or not env_enabled() or event not in _NOTES:
         return False
     now = time.monotonic()
-    if event in _last and now - _last[event] < 0.08:  # debounce key repeat
-        return False
-    _last[event] = now
-    _procs[:] = [p for p in _procs if p.poll() is None]  # reap finished players
-    if len(_procs) >= 4:
-        return False
-    cmd = player()
-    try:
-        if cmd is None:
-            if event == "error":  # only the error falls back to the terminal bell
-                sys.__stdout__.write("\a")
-                sys.__stdout__.flush()
-                return True
+    with _lock:
+        if event in _last and now - _last[event] < 0.08:  # debounce key repeat
             return False
-        _procs.append(subprocess.Popen(cmd + [sound_path(event)], stdin=subprocess.DEVNULL,
-                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                       start_new_session=True))
-        return True
-    except OSError:
-        return False
+        _last[event] = now
+        _procs[:] = [p for p in _procs if p.poll() is None]  # reap finished players
+        if len(_procs) >= 4:
+            return False
+        cmd = player()
+        try:
+            if cmd is None:
+                if event == "error":  # only the error falls back to the terminal bell
+                    sys.__stdout__.write("\a")
+                    sys.__stdout__.flush()
+                    return True
+                return False
+            _procs.append(subprocess.Popen(cmd + [sound_path(event)], stdin=subprocess.DEVNULL,
+                                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                           start_new_session=True))
+            return True
+        except OSError:
+            return False

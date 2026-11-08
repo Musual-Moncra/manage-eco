@@ -458,6 +458,12 @@ class State:
             play(self, "save")
         except Exception:
             pass
+        wake_w = getattr(self, "_wake_w", None)
+        if wake_w is not None:
+            try:
+                os.write(wake_w, b"m")
+            except OSError:
+                pass
 
     def toggle_share(self) -> None:
         if self.share_active:
@@ -2804,6 +2810,9 @@ def run_loop(state: State, next_event: Callable[[Optional[float]], Event], draw:
              api: ApiCall, clock: Callable[[], float]) -> None:
     """Draw, then wait: forever when idle (zero redraws), FRAME_S while an animation runs."""
     while state.running:
+        if getattr(state, "dirty", False):
+            state.dirty = False
+            refresh(state, api)
         state.now = clock()
         draw()
         event = next_event(FRAME_S if state.animating() else None)
@@ -2833,6 +2842,7 @@ def run_tui(store, today: date, api: Optional[ApiCall] = None, clock: Callable[[
     fd = sys.stdin.fileno()
     old = termios.tcgetattr(fd)
     wake_r, wake_w = os.pipe()
+    state._wake_w = wake_w
     old_winch = signal.signal(signal.SIGWINCH, lambda *_: os.write(wake_w, b"x"))
     console = Console()
     reader = KeyReader(fd, wake_r)
@@ -2853,6 +2863,7 @@ def run_tui(store, today: date, api: Optional[ApiCall] = None, clock: Callable[[
     except KeyboardInterrupt:
         pass
     finally:
+        state._wake_w = None
         if hasattr(state, "share_server") and state.share_server:
             state.share_server.stop()
         if hasattr(state, "share_tunnel") and state.share_tunnel:

@@ -42,6 +42,7 @@ class ShareServer:
         self.on_mutation = on_mutation
 
         self._lock = threading.Lock()
+        self._db_lock = threading.RLock()
         self._clients: List[queue.Queue] = []
         self._failed_attempts = 0
         self._locked_until = 0.0
@@ -104,7 +105,12 @@ class ShareServer:
 
                     if parsed.path == "/api/data":
                         if not self._verify_pin(params):
-                            self.send_error(HTTPStatus.UNAUTHORIZED, "Invalid or missing PIN")
+                            self.send_response(HTTPStatus.UNAUTHORIZED)
+                            self.send_header("Content-Type", "application/json; charset=utf-8")
+                            resp_body = json.dumps({"ok": False, "error": "Invalid or missing PIN"}, ensure_ascii=False).encode("utf-8")
+                            self.send_header("Content-Length", str(len(resp_body)))
+                            self.end_headers()
+                            self.wfile.write(resp_body)
                             return
                         snap = server_self.get_snapshot()
                         body = json.dumps(snap, ensure_ascii=False).encode("utf-8")
@@ -162,19 +168,61 @@ class ShareServer:
 
                     if parsed.path == "/api/action":
                         if not self._verify_pin(params):
-                            self.send_error(HTTPStatus.UNAUTHORIZED, "Invalid or missing PIN")
+                            self.send_response(HTTPStatus.UNAUTHORIZED)
+                            self.send_header("Content-Type", "application/json; charset=utf-8")
+                            resp_body = json.dumps({"ok": False, "error": "Invalid or missing PIN"}, ensure_ascii=False).encode("utf-8")
+                            self.send_header("Content-Length", str(len(resp_body)))
+                            self.end_headers()
+                            self.wfile.write(resp_body)
                             return
 
-                        content_len = int(self.headers.get("Content-Length", 0))
+                        try:
+                            content_len = int(self.headers.get("Content-Length", 0))
+                        except (ValueError, TypeError):
+                            content_len = -1
+
+                        if content_len < 0 or content_len > 65536:
+                            status = HTTPStatus.REQUEST_ENTITY_TOO_LARGE if content_len > 65536 else HTTPStatus.BAD_REQUEST
+                            self.send_response(status)
+                            self.send_header("Content-Type", "application/json; charset=utf-8")
+                            err_msg = "Payload too large (max 64KB)" if content_len > 65536 else "Invalid Content-Length"
+                            resp_body = json.dumps({"ok": False, "error": err_msg}, ensure_ascii=False).encode("utf-8")
+                            self.send_header("Content-Length", str(len(resp_body)))
+                            self.end_headers()
+                            self.wfile.write(resp_body)
+                            return
+
                         body_bytes = self.rfile.read(content_len)
                         try:
                             payload = json.loads(body_bytes.decode("utf-8"))
                         except Exception:
-                            self.send_error(HTTPStatus.BAD_REQUEST, "Invalid JSON payload")
+                            self.send_response(HTTPStatus.BAD_REQUEST)
+                            self.send_header("Content-Type", "application/json; charset=utf-8")
+                            resp_body = json.dumps({"ok": False, "error": "Invalid JSON payload"}, ensure_ascii=False).encode("utf-8")
+                            self.send_header("Content-Length", str(len(resp_body)))
+                            self.end_headers()
+                            self.wfile.write(resp_body)
+                            return
+
+                        if not isinstance(payload, dict):
+                            self.send_response(HTTPStatus.BAD_REQUEST)
+                            self.send_header("Content-Type", "application/json; charset=utf-8")
+                            resp_body = json.dumps({"ok": False, "error": "JSON payload must be an object"}, ensure_ascii=False).encode("utf-8")
+                            self.send_header("Content-Length", str(len(resp_body)))
+                            self.end_headers()
+                            self.wfile.write(resp_body)
                             return
 
                         action = payload.get("action")
                         action_params = payload.get("params", {})
+                        if not isinstance(action_params, dict):
+                            self.send_response(HTTPStatus.BAD_REQUEST)
+                            self.send_header("Content-Type", "application/json; charset=utf-8")
+                            resp_body = json.dumps({"ok": False, "error": "params must be an object"}, ensure_ascii=False).encode("utf-8")
+                            self.send_header("Content-Length", str(len(resp_body)))
+                            self.end_headers()
+                            self.wfile.write(resp_body)
+                            return
 
                         with server_self._lock:
                             allowed = set(server_self.allowed_edits)
@@ -211,7 +259,8 @@ class ShareServer:
 
                         try:
                             from manage_eco import api
-                            res = api.execute(cmd, action_params, server_self.store, server_self.today)
+                            with server_self._db_lock:
+                                res = api.execute(cmd, action_params, server_self.store, server_self.today)
                         except Exception as exc:
                             self.send_response(HTTPStatus.BAD_REQUEST)
                             self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -239,7 +288,11 @@ class ShareServer:
 
                     self.send_error(HTTPStatus.NOT_FOUND, "Not Found")
 
-            self._server = ThreadingHTTPServer(("0.0.0.0", self.requested_port), RequestHandler)
+            class _EcoHTTPServer(ThreadingHTTPServer):
+                request_queue_size = 64
+                daemon_threads = True
+
+            self._server = _EcoHTTPServer(("0.0.0.0", self.requested_port), RequestHandler)
             self.port = self._server.server_address[1]
             self._running = True
             self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
@@ -276,14 +329,19 @@ class ShareServer:
             return len(self._clients)
 
     def get_snapshot(self) -> Dict[str, Any]:
-        with self._lock:
+        with self._db_lock:
+            with self._lock:
+                tabs = set(self.allowed_tabs)
+                active = self.active_tab
+                mode = self.sync_mode
+                edits = set(self.allowed_edits)
             return get_shared_snapshot(
                 self.store,
                 self.today,
-                self.allowed_tabs,
-                active_tab=self.active_tab,
-                sync_mode=self.sync_mode,
-                allowed_edits=self.allowed_edits,
+                tabs,
+                active_tab=active,
+                sync_mode=mode,
+                allowed_edits=edits,
             )
 
     def update_config(
@@ -656,6 +714,12 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
                     <button type="button" class="chip-btn" onclick="setFormCat('nhà cửa')">🏠 Nhà cửa</button>
                 </div>
             </div>
+            <div class="form-group" id="groupAccount" style="display: none;">
+                <label class="form-label">Tài khoản / Ví</label>
+                <select id="inputAccount" class="form-input">
+                    <option value="">Mặc định (Ví chính)</option>
+                </select>
+            </div>
             <div class="form-group">
                 <label class="form-label">Ghi chú (tuỳ chọn)</label>
                 <input id="inputNote" class="form-input" placeholder="mua trà sữa, siêu thị..." />
@@ -706,6 +770,16 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
             if (n === null || n === undefined) return '0 ₫';
             const num = Math.round(Number(n));
             return num.toLocaleString('vi-VN') + ' ₫';
+        }
+
+        function escapeHtml(str) {
+            if (!str) return '';
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
         }
 
         function renderNav() {
@@ -840,11 +914,11 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
             let html = '<div class="card"><div class="card-title">Các mục tiêu tích luỹ</div>';
             data.goals.forEach(g => {
                 const pct = Math.min(100, Math.round((g.saved / (g.target || 1)) * 100));
-                const saveBtn = canSave ? `<button class="btn-sub-action" onclick="promptGoalSave(${g.id}, '${g.name}')">+ Góp</button>` : '';
+                const saveBtn = canSave ? `<button class="btn-sub-action" onclick="promptGoalSave(${g.id})">+ Góp</button>` : '';
                 html += `
                     <div style="margin-bottom: 16px;">
                         <div style="display: flex; justify-content: space-between; font-size: 0.95rem; font-weight: 600;">
-                            <span style="color: var(--pink)">${g.name}</span>
+                            <span style="color: var(--pink)">${escapeHtml(g.name)}</span>
                             <span>${fmtMoney(g.saved)} / ${fmtMoney(g.target)}</span>
                         </div>
                         <div class="progress-bar">
@@ -1163,7 +1237,10 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
         function closeExpenseModal() {
             document.getElementById('expenseModal').classList.remove('active');
             document.getElementById('inputAmount').value = '';
+            document.getElementById('inputCategory').value = '';
             document.getElementById('inputNote').value = '';
+            const acc = document.getElementById('inputAccount');
+            if (acc) acc.selectedIndex = 0;
         }
 
         function setFormAmount(amt) {
@@ -1178,11 +1255,15 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
             const amount = document.getElementById('inputAmount').value.trim();
             const category = document.getElementById('inputCategory').value.trim();
             const note = document.getElementById('inputNote').value.trim();
+            const accEl = document.getElementById('inputAccount');
+            const account = accEl ? accEl.value.trim() : '';
             if (!amount) {
                 showToast('Vui lòng nhập số tiền', true);
                 return;
             }
-            submitAction('expense', {amount: amount, category: category, note: note}).then(ok => {
+            const p = {amount: amount, category: category, note: note};
+            if (account) p.account = account;
+            submitAction('expense', p).then(ok => {
                 if (ok) closeExpenseModal();
             });
         }
@@ -1193,7 +1274,12 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
             }
         }
 
-        function promptGoalSave(goalId, name) {
+        function promptGoalSave(goalId) {
+            let name = "hũ";
+            if (state && state.tabs && state.tabs.goals && state.tabs.goals.goals) {
+                const found = state.tabs.goals.goals.find(x => x.id === goalId);
+                if (found && found.name) name = found.name;
+            }
             const amt = prompt('Nhập số tiền muốn nạp vào hũ "' + name + '" (ví dụ 200k, 500k):', '200k');
             if (amt && amt.trim()) {
                 submitAction('goal_save', {id: goalId, amount: amt.trim()});
@@ -1206,6 +1292,34 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
             }
         }
 
+        function updateAccountSelect() {
+            const grp = document.getElementById('groupAccount');
+            const sel = document.getElementById('inputAccount');
+            if (!grp || !sel) return;
+            let accs = [];
+            if (state.accounts && state.accounts.length > 0) {
+                accs = state.accounts;
+            } else if (state.tabs && state.tabs.accounts && state.tabs.accounts.accounts) {
+                accs = state.tabs.accounts.accounts;
+            } else if (state.tabs && state.tabs.overview && state.tabs.overview.accounts) {
+                accs = state.tabs.overview.accounts;
+            }
+            if (!accs || accs.length === 0) {
+                grp.style.display = 'none';
+                return;
+            }
+            grp.style.display = 'block';
+            const curVal = sel.value;
+            sel.innerHTML = '<option value="">Mặc định (Ví chính)</option>';
+            accs.forEach(a => {
+                const opt = document.createElement('option');
+                opt.value = a.name;
+                opt.textContent = a.name + (a.is_default ? ' (Mặc định)' : '');
+                sel.appendChild(opt);
+            });
+            if (curVal) sel.value = curVal;
+        }
+
         function applyState(newState) {
             state = newState;
             if (state.sync_mode === 'follow' && state.active_tab && state.allowed_tab_keys.includes(state.active_tab)) {
@@ -1216,6 +1330,7 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
                 const canAdd = state.allowed_edits && state.allowed_edits.includes('expense');
                 fab.style.display = canAdd ? 'flex' : 'none';
             }
+            updateAccountSelect();
             renderNav();
             renderContent();
         }

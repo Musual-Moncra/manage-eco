@@ -54,3 +54,8 @@ class WebTemplateTest(unittest.TestCase):
         self.assertIn("fab-add", content)
         self.assertIn("modal-sheet", content)
         self.assertIn("submitAction", content)
+        self.assertIn("inputAccount", content)
+        self.assertIn("groupAccount", content)
+        self.assertIn("escapeHtml", content)
+        self.assertIn("promptGoalSave(${g.id})", content)
+        self.assertIn("updateAccountSelect", content)

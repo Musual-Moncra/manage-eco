@@ -84,3 +84,19 @@ class TuiShareTest(unittest.TestCase):
         plain = "\n".join(l.plain for l in f.lines)
         self.assertIn("Ghi chi tiêu a", plain)
         self.assertIn("Xong dòng d", plain)
+
+    def test_on_remote_mutation_wakes_pipe_and_sets_dirty(self):
+        import os, select
+        r, w = os.pipe()
+        try:
+            self.state._wake_w = w
+            self.state.dirty = False
+            self.state._on_remote_mutation()
+            self.assertTrue(self.state.dirty)
+            readable, _, _ = select.select([r], [], [], 0.2)
+            self.assertTrue(readable, "wake pipe should be readable after mutation")
+            b = os.read(r, 64)
+            self.assertEqual(b, b"m")
+        finally:
+            os.close(r)
+            os.close(w)
