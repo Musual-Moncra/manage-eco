@@ -498,9 +498,171 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
             color: var(--pink);
             margin-bottom: 12px;
         }
+        .fab-add {
+            position: fixed;
+            bottom: 24px;
+            right: 20px;
+            background: linear-gradient(135deg, var(--accent), var(--pink));
+            color: #1e1b2e;
+            border: none;
+            border-radius: 28px;
+            padding: 12px 20px;
+            font-size: 0.95rem;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            box-shadow: 0 4px 16px rgba(196, 181, 253, 0.4);
+            cursor: pointer;
+            z-index: 99;
+            transition: transform 0.15s;
+        }
+        .fab-add:active { transform: scale(0.95); }
+        .modal-backdrop {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(15, 13, 24, 0.7);
+            backdrop-filter: blur(4px);
+            z-index: 1000;
+            display: none;
+            align-items: flex-end;
+            justify-content: center;
+        }
+        .modal-backdrop.active { display: flex; }
+        .modal-sheet {
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 20px 20px 0 0;
+            width: 100%;
+            max-width: 600px;
+            padding: 20px;
+            max-height: 85vh;
+            overflow-y: auto;
+            animation: slideUp 0.25s ease-out;
+        }
+        @keyframes slideUp {
+            from { transform: translateY(100%); }
+            to { transform: translateY(0); }
+        }
+        .form-group { margin-bottom: 14px; }
+        .form-label { font-size: 0.8rem; color: var(--muted); margin-bottom: 6px; display: block; font-weight: 600; }
+        .form-input {
+            width: 100%;
+            background: #1e1b2e;
+            border: 1px solid var(--card-border);
+            border-radius: 10px;
+            padding: 10px 12px;
+            color: #fff;
+            font-size: 1rem;
+            outline: none;
+        }
+        .form-input:focus { border-color: var(--accent); }
+        .chip-grid { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+        .chip-btn {
+            background: var(--pill);
+            border: 1px solid var(--card-border);
+            color: var(--muted);
+            border-radius: 12px;
+            padding: 5px 10px;
+            font-size: 0.8rem;
+            cursor: pointer;
+        }
+        .chip-btn.selected {
+            background: var(--accent);
+            color: #1e1b2e;
+            font-weight: 700;
+            border-color: var(--accent);
+        }
+        .btn-submit {
+            width: 100%;
+            background: var(--accent);
+            color: #1e1b2e;
+            border: none;
+            border-radius: 12px;
+            padding: 12px;
+            font-size: 1rem;
+            font-weight: 700;
+            cursor: pointer;
+            margin-top: 10px;
+        }
+        .btn-sub-action {
+            background: rgba(196, 181, 253, 0.15);
+            border: 1px solid var(--accent);
+            color: var(--accent);
+            border-radius: 12px;
+            padding: 4px 10px;
+            font-size: 0.78rem;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        .btn-del {
+            background: rgba(247, 118, 142, 0.15);
+            border: 1px solid var(--coral);
+            color: var(--coral);
+            border-radius: 8px;
+            padding: 2px 8px;
+            font-size: 0.75rem;
+            cursor: pointer;
+        }
+        .toast-msg {
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(38, 34, 59, 0.95);
+            border: 1px solid var(--accent);
+            color: #fff;
+            padding: 10px 18px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+            z-index: 2000;
+            display: none;
+        }
     </style>
 </head>
 <body>
+    <div id="toast" class="toast-msg"></div>
+
+    <button id="fabAdd" class="fab-add" style="display: none;" onclick="openExpenseModal()">
+        <span>+</span> Ghi chi tiêu
+    </button>
+
+    <div id="expenseModal" class="modal-backdrop">
+        <div class="modal-sheet">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;">
+                <div style="font-weight: 700; font-size: 1.1rem; color: var(--accent);">Ghi nhận khoản chi</div>
+                <button style="background: none; border: none; color: var(--muted); font-size: 1.2rem; cursor: pointer;" onclick="closeExpenseModal()">✕</button>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Số tiền (ví dụ: 50k, 120k, 1.5tr)</label>
+                <input id="inputAmount" class="form-input" placeholder="50k" />
+                <div class="chip-grid">
+                    <button type="button" class="chip-btn" onclick="setFormAmount('50k')">50k</button>
+                    <button type="button" class="chip-btn" onclick="setFormAmount('100k')">100k</button>
+                    <button type="button" class="chip-btn" onclick="setFormAmount('200k')">200k</button>
+                    <button type="button" class="chip-btn" onclick="setFormAmount('500k')">500k</button>
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Danh mục</label>
+                <input id="inputCategory" class="form-input" placeholder="ăn uống, mua sắm..." />
+                <div class="chip-grid" id="catChips">
+                    <button type="button" class="chip-btn" onclick="setFormCat('ăn uống')">🍜 Ăn uống</button>
+                    <button type="button" class="chip-btn" onclick="setFormCat('mua sắm')">🛒 Mua sắm</button>
+                    <button type="button" class="chip-btn" onclick="setFormCat('đi lại')">🛵 Đi lại</button>
+                    <button type="button" class="chip-btn" onclick="setFormCat('hoá đơn')">💡 Hoá đơn</button>
+                    <button type="button" class="chip-btn" onclick="setFormCat('nhà cửa')">🏠 Nhà cửa</button>
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Ghi chú (tuỳ chọn)</label>
+                <input id="inputNote" class="form-input" placeholder="mua trà sữa, siêu thị..." />
+            </div>
+            <button class="btn-submit" onclick="submitExpenseForm()">Lưu chi tiêu</button>
+        </div>
+    </div>
     <header>
         <div class="header-top">
             <div class="logo">🌿 Manage Eco</div>
@@ -674,9 +836,11 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
             if (!data || !data.goals || data.goals.length === 0) {
                 return '<div class="card"><div class="card-title">Hũ tiết kiệm</div><p style="color: var(--muted);">Chưa có hũ tiết kiệm nào.</p></div>';
             }
+            const canSave = state.allowed_edits && state.allowed_edits.includes('goals');
             let html = '<div class="card"><div class="card-title">Các mục tiêu tích luỹ</div>';
             data.goals.forEach(g => {
                 const pct = Math.min(100, Math.round((g.saved / (g.target || 1)) * 100));
+                const saveBtn = canSave ? `<button class="btn-sub-action" onclick="promptGoalSave(${g.id}, '${g.name}')">+ Góp</button>` : '';
                 html += `
                     <div style="margin-bottom: 16px;">
                         <div style="display: flex; justify-content: space-between; font-size: 0.95rem; font-weight: 600;">
@@ -686,9 +850,9 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
                         <div class="progress-bar">
                             <div class="progress-fill" style="width: ${pct}%; background: var(--pink);"></div>
                         </div>
-                        <div style="display: flex; justify-content: space-between; font-size: 0.78rem; color: var(--muted); margin-top: 4px;">
-                            <span>Tiến độ: ${pct}%</span>
-                            <span>Hạn: ${g.by || ''}</span>
+                        <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.78rem; color: var(--muted); margin-top: 4px;">
+                            <span>Tiến độ: ${pct}% • Hạn: ${g.by || ''}</span>
+                            ${saveBtn}
                         </div>
                     </div>
                 `;
@@ -701,17 +865,22 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
             if (!data || !data.plans || data.plans.length === 0) {
                 return '<div class="card"><div class="card-title">Dòng tiền</div><p style="color: var(--muted);">Không có khoản sắp tới hạn nào.</p></div>';
             }
+            const canDone = state.allowed_edits && state.allowed_edits.includes('cashflow');
             let html = '<div class="card"><div class="card-title">Khoản thu chi sắp tới hạn</div>';
             data.plans.forEach(p => {
                 const isInc = p.kind === 'income';
+                const doneBtn = canDone ? `<button class="btn-sub-action" onclick="submitPlanDone(${p.id})">✓ Xong</button>` : '';
                 html += `
                     <div class="list-item">
                         <div>
                             <div style="font-weight: 600; font-size: 0.95rem;">${p.name}</div>
                             <div style="font-size: 0.78rem; color: var(--muted);">${p.due_date || ''} • ${p.category || 'Khác'}</div>
                         </div>
-                        <div style="font-weight: 700; color: ${isInc ? 'var(--mint)' : 'var(--coral)'}; font-size: 1rem;">
-                            ${isInc ? '+' : '-'}${fmtMoney(p.amount)}
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <div style="font-weight: 700; color: ${isInc ? 'var(--mint)' : 'var(--coral)'}; font-size: 1rem;">
+                                ${isInc ? '+' : '-'}${fmtMoney(p.amount)}
+                            </div>
+                            ${doneBtn}
                         </div>
                     </div>
                 `;
@@ -746,17 +915,22 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
             if (!data || !data.transactions || data.transactions.length === 0) {
                 return '<div class="card"><div class="card-title">Giao dịch</div><p style="color: var(--muted);">Chưa có giao dịch tháng này.</p></div>';
             }
+            const canDel = state.allowed_edits && state.allowed_edits.includes('edit_tx');
             let html = '<div class="card"><div class="card-title">Giao dịch gần đây</div>';
             data.transactions.slice(0, 15).forEach(t => {
                 const isInc = t.kind === 'income';
+                const delBtn = canDel ? `<button class="btn-del" onclick="confirmDeleteTx(${t.id})">✕</button>` : '';
                 html += `
                     <div class="list-item">
                         <div>
                             <div style="font-weight: 600; font-size: 0.9rem;">${t.category || 'Khác'}</div>
                             <div style="font-size: 0.75rem; color: var(--muted);">${t.date} ${t.note ? '• ' + t.note : ''}</div>
                         </div>
-                        <div style="font-weight: 700; color: ${isInc ? 'var(--mint)' : 'var(--coral)'}; font-size: 0.95rem;">
-                            ${isInc ? '+' : '-'}${fmtMoney(t.amount)}
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <div style="font-weight: 700; color: ${isInc ? 'var(--mint)' : 'var(--coral)'}; font-size: 0.95rem;">
+                                ${isInc ? '+' : '-'}${fmtMoney(t.amount)}
+                            </div>
+                            ${delBtn}
                         </div>
                     </div>
                 `;
@@ -949,10 +1123,98 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
             else container.innerHTML = `<div class="card"><div class="card-title">${state.tab_labels[currentSelectedTab] || currentSelectedTab}</div><p style="color: var(--muted);">Đang cập nhật...</p></div>`;
         }
 
+        function showToast(msg, isError) {
+            const t = document.getElementById('toast');
+            if (!t) return;
+            t.textContent = msg;
+            t.style.borderColor = isError ? 'var(--coral)' : 'var(--mint)';
+            t.style.display = 'block';
+            setTimeout(() => { t.style.display = 'none'; }, 2500);
+        }
+
+        function submitAction(action, params) {
+            if (!pin) return Promise.reject(new Error("No PIN"));
+            return fetch('/api/action?pin=' + encodeURIComponent(pin), {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({action: action, params: params})
+            })
+            .then(r => r.json().then(data => ({status: r.status, ok: r.ok, data: data})))
+            .then(res => {
+                if (!res.ok) {
+                    showToast(res.data.error || 'Thao tác không thành công', true);
+                    return false;
+                } else {
+                    showToast('Đã lưu thành công! ✨', false);
+                    return true;
+                }
+            })
+            .catch(err => {
+                showToast('Lỗi kết nối máy chủ', true);
+                return false;
+            });
+        }
+
+        function openExpenseModal() {
+            document.getElementById('expenseModal').classList.add('active');
+            document.getElementById('inputAmount').focus();
+        }
+
+        function closeExpenseModal() {
+            document.getElementById('expenseModal').classList.remove('active');
+            document.getElementById('inputAmount').value = '';
+            document.getElementById('inputNote').value = '';
+        }
+
+        function setFormAmount(amt) {
+            document.getElementById('inputAmount').value = amt;
+        }
+
+        function setFormCat(cat) {
+            document.getElementById('inputCategory').value = cat;
+        }
+
+        function submitExpenseForm() {
+            const amount = document.getElementById('inputAmount').value.trim();
+            const category = document.getElementById('inputCategory').value.trim();
+            const note = document.getElementById('inputNote').value.trim();
+            if (!amount) {
+                showToast('Vui lòng nhập số tiền', true);
+                return;
+            }
+            submitAction('expense', {amount: amount, category: category, note: note}).then(ok => {
+                if (ok) closeExpenseModal();
+            });
+        }
+
+        function submitPlanDone(planId) {
+            if (confirm('Đánh dấu đã hoàn thành khoản dòng tiền này?')) {
+                submitAction('plan_done', {id: planId});
+            }
+        }
+
+        function promptGoalSave(goalId, name) {
+            const amt = prompt('Nhập số tiền muốn nạp vào hũ "' + name + '" (ví dụ 200k, 500k):', '200k');
+            if (amt && amt.trim()) {
+                submitAction('goal_save', {id: goalId, amount: amt.trim()});
+            }
+        }
+
+        function confirmDeleteTx(txId) {
+            if (confirm('Bạn có chắc muốn xoá giao dịch này không?')) {
+                submitAction('tx_delete', {id: txId});
+            }
+        }
+
         function applyState(newState) {
             state = newState;
             if (state.sync_mode === 'follow' && state.active_tab && state.allowed_tab_keys.includes(state.active_tab)) {
                 currentSelectedTab = state.active_tab;
+            }
+            const fab = document.getElementById('fabAdd');
+            if (fab) {
+                const canAdd = state.allowed_edits && state.allowed_edits.includes('expense');
+                fab.style.display = canAdd ? 'flex' : 'none';
             }
             renderNav();
             renderContent();

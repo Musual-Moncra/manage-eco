@@ -46,3 +46,11 @@ class WebTemplateTest(unittest.TestCase):
         with urllib.request.urlopen(no_pin_url) as resp:
             content_no_pin = resp.read().decode("utf-8")
         self.assertNotIn('<script id="initialData"', content_no_pin)
+
+    def test_web_template_contains_mutation_controls(self):
+        url = f"http://127.0.0.1:{self.port}/?pin=5678"
+        with urllib.request.urlopen(url) as resp:
+            content = resp.read().decode("utf-8")
+        self.assertIn("fab-add", content)
+        self.assertIn("modal-sheet", content)
+        self.assertIn("submitAction", content)
