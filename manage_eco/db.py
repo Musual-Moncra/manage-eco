@@ -2,7 +2,7 @@
 import os
 import sqlite3
 from datetime import date
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from manage_eco.models import Account, Budget, Goal, Plan, Transaction, Transfer, PENDING
 
@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS goals (
 CREATE TABLE IF NOT EXISTS accounts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT UNIQUE NOT NULL,
-    initial_balance INTEGER NOT NULL DEFAULT 0 CHECK (initial_balance >= 0),
+    initial_balance INTEGER NOT NULL DEFAULT 0,
     is_default INTEGER NOT NULL DEFAULT 0 CHECK (is_default IN (0, 1))
 );
 CREATE TABLE IF NOT EXISTS transfers (
@@ -54,7 +54,16 @@ CREATE TABLE IF NOT EXISTS transfers (
     from_account_id INTEGER NOT NULL REFERENCES accounts(id),
     to_account_id INTEGER NOT NULL REFERENCES accounts(id),
     note TEXT NOT NULL DEFAULT '',
+    category TEXT NOT NULL DEFAULT '',
     CHECK (from_account_id != to_account_id)
+);
+CREATE TABLE IF NOT EXISTS budget_adjustments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    month TEXT NOT NULL,
+    category TEXT NOT NULL,
+    adjustment INTEGER NOT NULL DEFAULT 0,
+    note TEXT NOT NULL DEFAULT '',
+    UNIQUE(month, category)
 );
 """
 
@@ -75,6 +84,39 @@ class Store:
         tx_cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(transactions)")}
         if "account_id" not in tx_cols:
             self.conn.execute("ALTER TABLE transactions ADD COLUMN account_id INTEGER")
+            self.conn.commit()
+        tr_cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(transfers)")}
+        if "category" not in tr_cols:
+            self.conn.execute("ALTER TABLE transfers ADD COLUMN category TEXT NOT NULL DEFAULT ''")
+            self.conn.commit()
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS budget_adjustments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                month TEXT NOT NULL,
+                category TEXT NOT NULL,
+                adjustment INTEGER NOT NULL DEFAULT 0,
+                note TEXT NOT NULL DEFAULT '',
+                UNIQUE(month, category)
+            )
+        """)
+        self.conn.commit()
+        acc_sql = self.conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='accounts'").fetchone()
+        if acc_sql and "initial_balance >= 0" in (acc_sql["sql"] or ""):
+            self.conn.execute("PRAGMA legacy_alter_table = ON")
+            self.conn.execute("ALTER TABLE accounts RENAME TO accounts_old")
+            self.conn.execute("""
+            CREATE TABLE accounts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT UNIQUE NOT NULL,
+                initial_balance INTEGER NOT NULL DEFAULT 0,
+                is_default INTEGER NOT NULL DEFAULT 0 CHECK (is_default IN (0, 1))
+            )""")
+            self.conn.execute(
+                "INSERT INTO accounts (id, name, initial_balance, is_default) "
+                "SELECT id, name, initial_balance, is_default FROM accounts_old"
+            )
+            self.conn.execute("DROP TABLE accounts_old")
+            self.conn.execute("PRAGMA legacy_alter_table = OFF")
             self.conn.commit()
 
     def close(self) -> None:
@@ -200,6 +242,29 @@ class Store:
     def list_budgets(self) -> List[Budget]:
         rows = self.conn.execute('SELECT category, "limit" FROM budgets ORDER BY category').fetchall()
         return [Budget(r["category"], r["limit"]) for r in rows]
+
+    def set_budget_adjustment(self, month: str, category: str, adjustment: int, note: str = "") -> None:
+        self.conn.execute(
+            """INSERT INTO budget_adjustments (month, category, adjustment, note)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(month, category) DO UPDATE SET adjustment = excluded.adjustment, note = excluded.note""",
+            (month, category, adjustment, note),
+        )
+        self.conn.commit()
+
+    def get_budget_adjustment(self, month: str, category: str) -> int:
+        row = self.conn.execute(
+            "SELECT adjustment FROM budget_adjustments WHERE month = ? AND category = ?",
+            (month, category),
+        ).fetchone()
+        return row["adjustment"] if row else 0
+
+    def list_budget_adjustments(self, month: str) -> Dict[str, int]:
+        rows = self.conn.execute(
+            "SELECT category, adjustment FROM budget_adjustments WHERE month = ?",
+            (month,),
+        ).fetchall()
+        return {r["category"]: r["adjustment"] for r in rows}
 
     # --- goals ---
     def add_goal(self, g: Goal) -> int:
@@ -341,8 +406,8 @@ class Store:
         if not self.get_account(tr.to_account_id):
             raise LookupError(f"Tài khoản đích {tr.to_account_id} không tồn tại")
         cur = self.conn.execute(
-            "INSERT INTO transfers (date, amount, from_account_id, to_account_id, note) VALUES (?, ?, ?, ?, ?)",
-            (tr.date.isoformat(), tr.amount, tr.from_account_id, tr.to_account_id, tr.note),
+            "INSERT INTO transfers (date, amount, from_account_id, to_account_id, note, category) VALUES (?, ?, ?, ?, ?, ?)",
+            (tr.date.isoformat(), tr.amount, tr.from_account_id, tr.to_account_id, tr.note, getattr(tr, "category", "") or ""),
         )
         self.conn.commit()
         tr.id = cur.lastrowid
@@ -373,12 +438,28 @@ class Store:
                 r["to_account_id"],
                 r["note"],
                 r["id"],
+                r["category"] if "category" in r.keys() else "",
             )
             for r in rows
         ]
 
     def delete_transfer(self, tid: int) -> bool:
         cur = self.conn.execute("DELETE FROM transfers WHERE id = ?", (tid,))
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def update_transfer(self, tid: int, category: Optional[str] = None, note: Optional[str] = None) -> bool:
+        fields, args = [], []
+        if category is not None:
+            fields.append("category = ?")
+            args.append(category)
+        if note is not None:
+            fields.append("note = ?")
+            args.append(note)
+        if not fields:
+            return False
+        args.append(tid)
+        cur = self.conn.execute("UPDATE transfers SET " + ", ".join(fields) + " WHERE id = ?", args)
         self.conn.commit()
         return cur.rowcount > 0
 

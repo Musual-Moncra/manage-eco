@@ -82,16 +82,22 @@ def overdue(store, today: date) -> List[Plan]:
 
 def budget_status(store, year: int, month: int) -> List[dict]:
     start, end = _month_bounds(year, month)
+    m_str = "%d-%02d" % (year, month)
     expenses = [t for t in store.list_transactions(start, end) if t.kind == EXPENSE]
+    transfers = store.list_transfers(start=start, end=end) if hasattr(store, "list_transfers") else []
+    adjustments = store.list_budget_adjustments(m_str) if hasattr(store, "list_budget_adjustments") else {}
     result = []
     for budget in store.list_budgets():
-        spent = sum(t.amount for t in expenses if t.category == budget.category)
+        spent_exp = sum(t.amount for t in expenses if t.category == budget.category)
+        spent_tr = sum(tr.amount for tr in transfers if getattr(tr, "category", "") == budget.category)
+        spent_adj = adjustments.get(budget.category, 0)
+        spent = spent_exp + spent_tr + spent_adj
         result.append({
             "category": budget.category,
             "limit": budget.limit,
             "spent": spent,
             "remaining": budget.limit - spent,
-            "pct": spent / budget.limit * 100,
+            "pct": spent / budget.limit * 100 if budget.limit > 0 else 0.0,
         })
     return result
 

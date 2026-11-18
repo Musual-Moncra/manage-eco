@@ -39,6 +39,8 @@ _procs = []  # type: List[subprocess.Popen]
 def cache_dir() -> str:
     if sys.platform == "darwin":
         base = os.path.expanduser("~/Library/Caches")
+    elif sys.platform == "win32":
+        base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~/.cache")
     else:
         base = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
     return os.path.join(base, "manage_eco", "sfx")
@@ -107,6 +109,13 @@ def play(event: str, enabled: bool = True) -> bool:
         _procs[:] = [p for p in _procs if p.poll() is None]  # reap finished players
         if len(_procs) >= 4:
             return False
+        if sys.platform == "win32":
+            try:
+                import winsound
+                winsound.PlaySound(sound_path(event), winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
+                return True
+            except Exception:
+                return False
         cmd = player()
         try:
             if cmd is None:

@@ -69,13 +69,20 @@ def account_table(accounts: List[dict], total_balance: int = 0) -> Table:
 
 
 def transfer_table(transfers: List[dict]) -> Table:
-    t = _table("Lịch sử chuyển tiền", "#", "Ngày", "Từ tài khoản", "Đến tài khoản", "Số tiền", "Ghi chú",
-               right=("#", "Số tiền"))
+    has_cat = any(tr.get("category") for tr in transfers)
+    cols = ["#", "Ngày", "Từ tài khoản", "Đến tài khoản", "Số tiền"]
+    if has_cat:
+        cols.append("Danh mục")
+    cols.append("Ghi chú")
+    t = _table("Lịch sử chuyển tiền", *cols, right=("#", "Số tiền"))
     for tr in transfers:
-        t.add_row(str(tr["id"]), tr["date"], tr["from_account"], tr["to_account"],
-                  money(tr["amount"]), "[%s]%s[/]" % (MUTED, tr["note"]))
+        row = [str(tr["id"]), tr["date"], tr["from_account"], tr["to_account"], money(tr["amount"])]
+        if has_cat:
+            row.append(tr.get("category") or "")
+        row.append("[%s]%s[/]" % (MUTED, tr["note"]))
+        t.add_row(*row)
     if not transfers:
-        t.add_row("", "", "", "[dim]chưa có giao dịch chuyển tiền[/]", "", "")
+        t.add_row("", "", "", "[dim]chưa có giao dịch chuyển tiền[/]", "", *([""] if has_cat else []))
     return t
 
 
@@ -192,8 +199,13 @@ def render(cmd: str, d: dict):
                                 % (d["plan"]["name"], d["transaction"]["id"], _signed(d["transaction"]["signed"])))
     if cmd == "plan cancel":
         return Text.from_markup("✓ Đã huỷ dòng tiền #%d" % d["plan"]["id"])
-    if cmd == "budget set":
-        return Text.from_markup("✓ Ngân sách %s: %s/tháng" % (d["budget"]["category"], money(d["budget"]["limit"])))
+    if cmd in ("budget set", "budget edit"):
+        verb = "Đã sửa ngân sách" if cmd == "budget edit" else "Ngân sách"
+        return Text.from_markup("✓ %s %s: %s/tháng" % (verb, d["budget"]["category"], money(d["budget"]["limit"])))
+    if cmd == "budget adjust":
+        b = d["budget"]
+        return Text.from_markup("✓ Đã chỉnh số đã tiêu ngân sách %s tháng %s: %s (còn lại: %s)"
+                                % (b["category"], d.get("month", ""), money(b["spent"]), money(b["remaining"])))
     if cmd == "budget status":
         return budget_table(d["budgets"])
     if cmd == "forecast":
@@ -241,11 +253,16 @@ def render(cmd: str, d: dict):
         return Text.from_markup("✓ Đã đặt tài khoản #%d \"%s\" làm mặc định" % (a["id"], a["name"]))
     if cmd == "account transfer":
         tr = d["transfer"]
-        return Text.from_markup("✓ Đã chuyển %s từ \"%s\" sang \"%s\" (Số dư nguồn: %s, đích: %s)"
-                                % (money(tr["amount"]), tr["from_account"], tr["to_account"],
+        cat_info = " [danh mục: %s]" % tr["category"] if tr.get("category") else ""
+        return Text.from_markup("✓ Đã chuyển %s từ \"%s\" sang \"%s\"%s (Số dư nguồn: %s, đích: %s)"
+                                % (money(tr["amount"]), tr["from_account"], tr["to_account"], cat_info,
                                    money(d["from_balance"]), money(d["to_balance"])))
     if cmd == "account transfers":
         return transfer_table(d["transfers"])
+    if cmd in ("account transfer-edit", "account edit-transfer"):
+        tr = d["transfer"]
+        cat_info = " [danh mục: %s]" % tr["category"] if tr.get("category") else ""
+        return Text.from_markup("✓ Đã cập nhật chuyển tiền #%d%s" % (tr["id"], cat_info))
     if cmd == "dash":
         return dashboard(d)
     if cmd == "edit":

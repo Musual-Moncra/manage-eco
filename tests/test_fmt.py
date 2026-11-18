@@ -63,6 +63,12 @@ class FmtTest(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     parse_money(bad)
 
+    def test_parse_money_allow_negative(self):
+        self.assertEqual(parse_money("-100k", allow_negative=True), -100_000)
+        self.assertEqual(parse_money("-2tr", allow_negative=True), -2_000_000)
+        self.assertEqual(parse_money("50k - 150k", allow_negative=True), -100_000)
+        self.assertEqual(parse_money("0", allow_negative=True), 0)
+
     def test_money_preview(self):
         self.assertEqual(money_preview("50k+20k"), "= 70.000 ₫")
         self.assertEqual(money_preview("3x150k"), "= 450.000 ₫")

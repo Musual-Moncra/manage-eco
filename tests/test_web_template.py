@@ -59,3 +59,37 @@ class WebTemplateTest(unittest.TestCase):
         self.assertIn("escapeHtml", content)
         self.assertIn("promptGoalSave(${g.id})", content)
         self.assertIn("updateAccountSelect", content)
+
+    def test_transactions_large_dataset_support(self):
+        url = f"http://127.0.0.1:{self.port}/?pin=5678"
+        with urllib.request.urlopen(url) as resp:
+            content = resp.read().decode("utf-8")
+        self.assertIn("txSearchInput", content)
+        self.assertIn("loadMoreTx", content)
+        self.assertIn("loadAllTx", content)
+        self.assertIn("escapeHtml(t.category", content)
+        self.assertIn("escapeHtml(t.note", content)
+
+    def test_transactions_with_many_items_e2e(self):
+        from manage_eco.models import Transaction
+        import json
+        self.server.update_config(allowed_tabs={"transactions", "overview"})
+        # Add 75 transactions
+        for i in range(75):
+            self.store.add_transaction(Transaction(self.today, 10000 + i, "expense", "food", f"Item #{i}"))
+        
+        # Verify API returns all 75 transactions
+        api_url = f"http://127.0.0.1:{self.port}/api/data?pin=5678"
+        with urllib.request.urlopen(api_url) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        txs = data["tabs"]["transactions"]["transactions"]
+        self.assertEqual(len(txs), 75)
+
+        # Verify HTML hydration includes all items without truncation
+        html_url = f"http://127.0.0.1:{self.port}/?pin=5678"
+        with urllib.request.urlopen(html_url) as resp:
+            html = resp.read().decode("utf-8")
+        self.assertIn("Item #0", html)
+        self.assertIn("Item #74", html)
+
+

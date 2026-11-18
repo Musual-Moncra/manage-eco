@@ -70,7 +70,7 @@ def get_shared_snapshot(
         tabs_data["accounts"] = api.execute("account list", {}, store, today)
 
     if "transactions" in allowed_tabs:
-        tabs_data["transactions"] = api.execute("list", {"month": month_str}, store, today)
+        tabs_data["transactions"] = api.execute("list", {"all": True}, store, today)
 
     if "cashflow" in allowed_tabs:
         tabs_data["cashflow"] = api.execute("plan list", {"all": False}, store, today)

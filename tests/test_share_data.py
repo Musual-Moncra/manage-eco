@@ -61,3 +61,12 @@ class ShareDataTest(unittest.TestCase):
         self.assertIn("edit_tx", ALL_ACTION_PERMISSIONS)
         snap = get_shared_snapshot(self.store, self.today, allowed_tabs={"overview"}, allowed_edits={"expense", "goals"})
         self.assertEqual(snap["allowed_edits"], ["expense", "goals"])
+
+    def test_transactions_tab_includes_all_transactions(self):
+        self.store.add_transaction(Transaction(date(2026, 10, 15), 50000, "expense", "snack", "past"))
+        snap = get_shared_snapshot(self.store, self.today, allowed_tabs={"transactions"})
+        txs = snap["tabs"]["transactions"]["transactions"]
+        dates = [t["date"] for t in txs]
+        self.assertIn("2026-11-08", dates)
+        self.assertIn("2026-10-15", dates)
+

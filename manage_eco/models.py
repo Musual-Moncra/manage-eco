@@ -87,3 +87,4 @@ class Transfer:
     to_account_id: int
     note: str = ""
     id: Optional[int] = None
+    category: str = ""

@@ -69,6 +69,15 @@ class AccountsApiTest(unittest.TestCase):
         self.assertEqual(res_set["account"]["balance"], 0)
         self.assertEqual(self.store.account_balance(aid), 0)
 
+        # Add income of 10tr -> balance becomes 10tr
+        api.execute("income", {"amount": "10tr", "account": aid}, self.store, self.today)
+        self.assertEqual(self.store.account_balance(aid), 10_000_000)
+
+        # Adjust balance downwards to 2tr (diff = -8tr, initial_balance becomes negative)
+        res_down = api.execute("account edit", {"id": aid, "balance": "2tr"}, self.store, self.today)
+        self.assertEqual(res_down["account"]["balance"], 2_000_000)
+        self.assertEqual(self.store.account_balance(aid), 2_000_000)
+
     def test_account_rm(self):
         res = api.execute("account add", {"name": "Tiền mặt", "initial_balance": "0"}, self.store, self.today)
         res2 = api.execute("account add", {"name": "Tạm", "initial_balance": "0"}, self.store, self.today)
@@ -98,6 +107,53 @@ class AccountsApiTest(unittest.TestCase):
         self.assertEqual(len(trs["transfers"]), 1)
         self.assertEqual(trs["transfers"][0]["from_account"], "Techcombank")
         self.assertEqual(trs["transfers"][0]["to_account"], "ZaloPay")
+
+    def test_account_transfer_with_category_counts_in_budget(self):
+        api.execute("account add", {"name": "ZaloPay", "initial_balance": "5tr"}, self.store, self.today)
+        api.execute("account add", {"name": "MB Bank", "initial_balance": "0"}, self.store, self.today)
+        api.execute("budget set", {"category": "bạn gái", "amount": "2tr"}, self.store, self.today)
+
+        # Transfer with category
+        api.execute(
+            "account transfer",
+            {"from": "ZaloPay", "to": "MB Bank", "amount": "500k", "category": "bạn gái", "note": "sinh hoạt chung"},
+            self.store,
+            self.today,
+        )
+
+        # Check budget status: spent must include the 500k transfer!
+        b_status = api.execute("budget status", {}, self.store, self.today)
+        bg = next(b for b in b_status["budgets"] if b["category"] == "bạn gái")
+        self.assertEqual(bg["spent"], 500_000)
+        self.assertEqual(bg["remaining"], 1_500_000)
+        self.assertEqual(bg["pct"], 25.0)
+
+    def test_account_edit_transfer_updates_category_and_budget(self):
+        api.execute("account add", {"name": "ZaloPay", "initial_balance": "5tr"}, self.store, self.today)
+        api.execute("account add", {"name": "MB Bank", "initial_balance": "0"}, self.store, self.today)
+        api.execute("budget set", {"category": "bạn gái", "amount": "2tr"}, self.store, self.today)
+
+        # Transfer without category first (like in the past)
+        tr = api.execute(
+            "account transfer",
+            {"from": "ZaloPay", "to": "MB Bank", "amount": "500k", "note": "chuyển cũ"},
+            self.store,
+            self.today,
+        )
+        tid = tr["transfer"]["id"]
+
+        # Initially budget spent is 0
+        b_status = api.execute("budget status", {}, self.store, self.today)
+        bg = next(b for b in b_status["budgets"] if b["category"] == "bạn gái")
+        self.assertEqual(bg["spent"], 0)
+
+        # Now retroactively update transfer with category
+        api.execute("account edit-transfer", {"id": tid, "category": "bạn gái"}, self.store, self.today)
+
+        # Budget now includes the past transfer
+        b_status = api.execute("budget status", {}, self.store, self.today)
+        bg = next(b for b in b_status["budgets"] if b["category"] == "bạn gái")
+        self.assertEqual(bg["spent"], 500_000)
 
     def test_account_transfer_to_self_fails(self):
         api.execute("account add", {"name": "Tiền mặt", "initial_balance": "1tr"}, self.store, self.today)

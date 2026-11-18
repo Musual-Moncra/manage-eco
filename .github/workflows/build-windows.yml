@@ -1,0 +1,54 @@
+name: Build Windows Executable
+
+on:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e . pyinstaller
+
+      - name: Run unit tests (core)
+        run: |
+          python -m unittest tests/test_cli.py tests/test_sfx.py tests/test_json.py tests/test_plans.py tests/test_accounts_cli.py -v
+
+      - name: Build eco.exe
+        run: |
+          pyinstaller --noconfirm --clean packaging/eco.spec
+
+      - name: Smoke test eco.exe
+        shell: pwsh
+        run: |
+          $db = Join-Path $env:RUNNER_TEMP "smoke.db"
+          .\dist\eco.exe --json --db $db --today 2026-11-06 income 20000000 salary -n "luong"
+          .\dist\eco.exe --json --db $db --today 2026-11-06 expense 50k food -n "pho"
+          .\dist\eco.exe --json --db $db --today 2026-11-06 dash
+
+      - name: Upload eco.exe artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: manage-eco-windows-x64
+          path: dist/eco.exe
+
+      - name: Attach to Release (on tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/eco.exe

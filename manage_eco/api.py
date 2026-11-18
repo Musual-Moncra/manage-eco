@@ -54,6 +54,7 @@ def transfer_dict(tr: Transfer, store=None) -> dict:
         "to_account_id": tr.to_account_id,
         "to_account": to_acc.name if to_acc else str(tr.to_account_id),
         "note": tr.note,
+        "category": getattr(tr, "category", "") or "",
     }
 
 
@@ -70,14 +71,14 @@ def _amount(v: Any) -> int:
     return parse_money(str(v))
 
 
-def _initial_amount(v: Any) -> int:
+def _initial_amount(v: Any, allow_negative: bool = True) -> int:
     if v in (None, ""):
         return 0
     if isinstance(v, int) and not isinstance(v, bool):
-        if v < 0:
+        if not allow_negative and v < 0:
             raise ValueError("số dư phải >= 0")
         return v
-    return parse_money(str(v).strip(), allow_zero=True)
+    return parse_money(str(v).strip(), allow_zero=True, allow_negative=allow_negative)
 
 
 def _resolve_account_id(store, acc_val: Any) -> Optional[int]:
@@ -324,11 +325,55 @@ def budget_set(params, store, today):
     return {"budget": {"category": b.category, "limit": b.limit}}
 
 
+def budget_edit(params, store, today):
+    _require(params, "category", "amount")
+    cat = str(params["category"])
+    existing = [b for b in store.list_budgets() if b.category == cat]
+    if not existing:
+        raise LookupError("không có ngân sách cho %r" % cat)
+    b = Budget(cat, _amount(params["amount"]))
+    store.set_budget(b)
+    return {"budget": {"category": b.category, "limit": b.limit}}
+
+
 def budget_delete(params, store, today):
     _require(params, "category")
     if not store.delete_budget(str(params["category"])):
         raise LookupError("không có ngân sách cho %r" % params["category"])
     return {"deleted": str(params["category"])}
+
+
+def budget_adjust(params, store, today):
+    _require(params, "category")
+    cat = str(params["category"])
+    existing = [b for b in store.list_budgets() if b.category == cat]
+    if not existing:
+        raise LookupError("không có ngân sách cho %r" % cat)
+    y, m = _month(params.get("month"), today)
+    m_str = "%d-%02d" % (y, m)
+
+    start, end = cashflow.month_range(y, m)
+    expenses = [t for t in store.list_transactions(start, end) if t.kind == EXPENSE]
+    transfers = store.list_transfers(start=start, end=end) if hasattr(store, "list_transfers") else []
+    base_spent = (
+        sum(t.amount for t in expenses if t.category == cat) +
+        sum(tr.amount for tr in transfers if getattr(tr, "category", "") == cat)
+    )
+
+    if _given(params, "spent"):
+        target_spent = _initial_amount(params["spent"], allow_negative=False)
+        adjustment = target_spent - base_spent
+    elif _given(params, "amount"):
+        delta = _initial_amount(params["amount"], allow_negative=True)
+        cur_adj = store.get_budget_adjustment(m_str, cat)
+        adjustment = cur_adj + delta
+    else:
+        raise ValueError("cần truyền spent hoặc amount để điều chỉnh")
+
+    note = str(params.get("note") or "").strip()
+    store.set_budget_adjustment(m_str, cat, adjustment, note)
+    curr = next((b for b in plans.budget_status(store, y, m) if b["category"] == cat), None)
+    return {"budget": curr, "month": m_str}
 
 
 def budget_status(params, store, today):
@@ -545,7 +590,8 @@ def account_transfer(params, store, today):
     amt = _amount(params["amount"])
     d = _date(params.get("date"), today)
     note = str(params.get("note") or "").strip()
-    tr = Transfer(d, amt, from_id, to_id, note)
+    category = str(params.get("category") or "").strip()
+    tr = Transfer(d, amt, from_id, to_id, note, category=category)
     tid = store.add_transfer(tr)
     created_tr = next((t for t in store.list_transfers() if t.id == tid), tr)
     return {
@@ -562,6 +608,19 @@ def account_transfers(params, store, today):
     end = _date(params["end"], today) if params.get("end") else None
     trs = store.list_transfers(account_id=acc_id, start=start, end=end)
     return {"transfers": [transfer_dict(tr, store) for tr in trs]}
+
+
+def account_transfer_edit(params, store, today):
+    _require(params, "id")
+    tid = int(params["id"])
+    cat = params.get("category")
+    note = params.get("note")
+    cat_val = str(cat).strip() if cat is not None else None
+    note_val = str(note).strip() if note is not None else None
+    if not store.update_transfer(tid, category=cat_val, note=note_val):
+        raise LookupError("không tìm thấy giao dịch chuyển tiền #%d" % tid)
+    tr = next((t for t in store.list_transfers() if t.id == tid), None)
+    return {"transfer": transfer_dict(tr, store)}
 
 
 def account_set_default(params, store, today):
@@ -604,6 +663,10 @@ def categories(params, store, today):
     for b in store.list_budgets():
         if b.category:
             counts[EXPENSE].setdefault(b.category, 0)
+    if hasattr(store, "list_transfers"):
+        for tr in store.list_transfers():
+            if getattr(tr, "category", ""):
+                counts[EXPENSE].setdefault(tr.category, 0)
     rank = lambda c: [k for k, _ in sorted(c.items(), key=lambda kv: (-kv[1], kv[0]))]
     return {"expense": rank(counts[EXPENSE]), "income": rank(counts[INCOME])}
 
@@ -636,7 +699,8 @@ COMMANDS = {
     "income": income, "expense": expense, "list": list_, "rm": rm, "summary": summary,
     "plan add": plan_add, "plan list": plan_list, "plan done": plan_done, "plan cancel": plan_cancel,
     "edit": edit, "plan edit": plan_edit,
-    "budget set": budget_set, "budget status": budget_status, "budget delete": budget_delete,
+    "budget set": budget_set, "budget edit": budget_edit, "budget adjust": budget_adjust,
+    "budget status": budget_status, "budget delete": budget_delete,
     "history": history,
     "forecast": forecast, "goal": goal,
     "goal add": goal_add, "goal list": goal_list, "goal save": goal_save, "goal take": goal_take,
@@ -644,7 +708,8 @@ COMMANDS = {
     "account add": account_add, "account list": account_list, "account edit": account_edit,
     "account set-balance": account_set_balance,
     "account rm": account_rm, "account delete": account_rm, "account transfer": account_transfer,
-    "account transfers": account_transfers, "account set-default": account_set_default,
+    "account transfers": account_transfers, "account transfer-edit": account_transfer_edit,
+    "account edit-transfer": account_transfer_edit, "account set-default": account_set_default,
     "dash": dash, "categories": categories, "sound": sound, "icons": icons,
 }  # type: Dict[str, Callable[[dict, Any, date], dict]]
 

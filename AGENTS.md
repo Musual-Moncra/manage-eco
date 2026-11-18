@@ -237,6 +237,32 @@ python3 -m manage_eco --json --db eco.db --today 2026-11-06 budget set food 3000
 {"ok": true, "command": "budget set", "data": {"budget": {"category": "food", "limit": 3000000}}}
 ```
 
+### `budget edit CATEGORY AMOUNT`
+
+```bash
+python3 -m manage_eco --json --db eco.db --today 2026-11-06 budget edit food 3500000
+```
+
+```json
+{"ok": true, "command": "budget edit", "data": {"budget": {"category": "food", "limit": 3500000}}}
+```
+
+Sửa hạn mức ngân sách của danh mục đã tồn tại. Nếu chưa có ngân sách → exit 1 `not_found`.
+
+### `budget adjust CATEGORY SPENT [--month YYYY-MM]`
+
+```bash
+python3 -m manage_eco --json --db eco.db --today 2026-11-06 budget adjust food 1500000
+```
+
+```json
+{"ok": true, "command": "budget adjust", "data": {"budget": {"category": "food", "limit": 3000000, "spent": 1500000, "remaining": 1500000, "pct": 50.0}, "month": "2026-11"}}
+```
+
+Điều chỉnh số đã tiêu (spent) trong ngân sách tháng này (hoặc tháng được chỉ định).
+Trong TUI: chọn danh mục ngân sách và bấm `± Đã tiêu` (phím `j`).
+
+
 ### `budget status [--month YYYY-MM]`
 
 ```bash
@@ -341,11 +367,15 @@ python3 -m manage_eco --json --db eco.db account list
 python3 -m manage_eco --json --db eco.db account set-balance "Tiền mặt" 2tr
 python3 -m manage_eco --json --db eco.db account edit 1 --balance 2tr
 
-# Transfer money between accounts (internal transfers do not affect monthly expense/income)
+# Transfer money between accounts (internal transfers do not affect monthly expense/income unless --category is given to count toward a budget)
 python3 -m manage_eco --json --db eco.db account transfer Techcombank ZaloPay 2tr -n "nap vi"
+python3 -m manage_eco --json --db eco.db account transfer ZaloPay MB 500k -c "bạn gái" -n "sinh hoạt chung"
 
 # List transfers
 python3 -m manage_eco --json --db eco.db account transfers
+
+# Edit past transfer category or note
+python3 -m manage_eco --json --db eco.db account edit-transfer 1 -c "bạn gái" -n "sinh hoạt chung"
 
 # Set default account
 python3 -m manage_eco --json --db eco.db account set-default 2

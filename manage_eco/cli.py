@@ -78,9 +78,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     budget = sub.add_parser("budget", help="ngân sách theo danh mục")
     bsub = budget.add_subparsers(dest="sub", required=True)
-    s = bsub.add_parser("set")
+    s = bsub.add_parser("set", help="đặt hạn mức ngân sách")
     s.add_argument("category")
     s.add_argument("amount")
+    s = bsub.add_parser("edit", help="sửa hạn mức ngân sách")
+    s.add_argument("category")
+    s.add_argument("amount")
+    s = bsub.add_parser("adjust", help="điều chỉnh số đã sử dụng của ngân sách")
+    s.add_argument("category")
+    s.add_argument("spent", help="số đã tiêu mong muốn (vd: 500k, 1.2tr)")
+    s.add_argument("--month", help="tháng cần chỉnh (mặc định: tháng này)")
     s = bsub.add_parser("delete", help="xoá ngân sách của danh mục")
     s.add_argument("category")
     s = bsub.add_parser("status")
@@ -149,6 +156,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("from", help="tài khoản nguồn (tên hoặc ID)")
     s.add_argument("to", help="tài khoản đích (tên hoặc ID)")
     s.add_argument("amount", help="số tiền chuyển")
+    s.add_argument("-c", "--category", default="", help="danh mục ngân sách (tùy chọn)")
     s.add_argument("-d", "--date")
     s.add_argument("-n", "--note", default="")
 
@@ -156,6 +164,11 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--account", help="lọc theo tài khoản (tên hoặc ID)")
     s.add_argument("--start")
     s.add_argument("--end")
+
+    s = asub.add_parser("edit-transfer", help="sửa danh mục hoặc ghi chú giao dịch chuyển tiền")
+    s.add_argument("id", type=int)
+    s.add_argument("-c", "--category", help="danh mục ngân sách")
+    s.add_argument("-n", "--note", help="ghi chú")
 
     sub.add_parser("dash", help="bảng tổng quan")
     sub.add_parser("categories", help="danh mục đã dùng (nhiều nhất trước)")
@@ -191,6 +204,13 @@ def _preprocess_argv(argv: Optional[List[str]]) -> Optional[List[str]]:
 
 def main(argv: Optional[List[str]] = None, store: Optional[Store] = None,
          console=None, today: Optional[date] = None) -> int:
+    if sys.platform == "win32":
+        for stream in (sys.stdout, sys.stderr):
+            if hasattr(stream, "reconfigure"):
+                try:
+                    stream.reconfigure(encoding="utf-8")
+                except Exception:
+                    pass
     argv = _preprocess_argv(argv)
     args = build_parser().parse_args(argv)
     as_json = args.json or os.environ.get("ECO_JSON") == "1"

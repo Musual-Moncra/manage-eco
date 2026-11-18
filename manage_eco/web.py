@@ -766,6 +766,49 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
 
         let currentSelectedTab = 'overview';
 
+        let txState = {
+            search: '',
+            filterKind: 'all',
+            monthFilter: 'all',
+            limit: 30
+        };
+
+        function setTxKindFilter(k) {
+            txState.filterKind = k;
+            renderContent();
+        }
+
+        function setTxMonthFilter(m) {
+            txState.monthFilter = m;
+            renderContent();
+        }
+
+        function onTxSearch(val) {
+            txState.search = val;
+            const listEl = document.getElementById('txListContainer');
+            const tabData = (state.tabs && state.tabs.transactions) || null;
+            if (listEl && tabData) {
+                listEl.innerHTML = renderTxItemsHtml(tabData);
+            } else {
+                renderContent();
+            }
+        }
+
+        function loadMoreTx(step) {
+            txState.limit = (txState.limit || 30) + (step || 30);
+            renderContent();
+        }
+
+        function loadAllTx() {
+            txState.limit = 999999;
+            renderContent();
+        }
+
+        function collapseTx() {
+            txState.limit = 30;
+            renderContent();
+        }
+
         function fmtMoney(n) {
             if (n === null || n === undefined) return '0 ₫';
             const num = Math.round(Number(n));
@@ -985,23 +1028,96 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
             return html;
         }
 
-        function renderTransactions(data) {
-            if (!data || !data.transactions || data.transactions.length === 0) {
-                return '<div class="card"><div class="card-title">Giao dịch</div><p style="color: var(--muted);">Chưa có giao dịch tháng này.</p></div>';
+        function getFilteredTransactions(data) {
+            if (!data || !data.transactions) return [];
+            const sorted = [...data.transactions].sort((a, b) => {
+                const da = a.date || '';
+                const db = b.date || '';
+                if (db !== da) return db.localeCompare(da);
+                return (b.id || 0) - (a.id || 0);
+            });
+
+            const curMonth = (state.today || '').slice(0, 7) || (state.month || '');
+
+            return sorted.filter(t => {
+                if (txState.filterKind === 'expense' && t.kind !== 'expense') return false;
+                if (txState.filterKind === 'income' && t.kind !== 'income') return false;
+
+                if (txState.monthFilter === 'current' && curMonth) {
+                    if (!t.date || !t.date.startsWith(curMonth)) return false;
+                } else if (txState.monthFilter !== 'all' && txState.monthFilter) {
+                    if (!t.date || !t.date.startsWith(txState.monthFilter)) return false;
+                }
+
+                if (txState.search) {
+                    const q = txState.search.toLowerCase().trim();
+                    const cat = (t.category || '').toLowerCase();
+                    const note = (t.note || '').toLowerCase();
+                    const amt = String(t.amount || '');
+                    const d = (t.date || '');
+                    if (!cat.includes(q) && !note.includes(q) && !amt.includes(q) && !d.includes(q)) {
+                        return false;
+                    }
+                }
+
+                return true;
+            });
+        }
+
+        function getTxStats(list) {
+            let inc = 0;
+            let exp = 0;
+            list.forEach(t => {
+                if (t.kind === 'income') inc += (t.amount || 0);
+                else exp += (t.amount || 0);
+            });
+            return { count: list.length, inc: inc, exp: exp, net: inc - exp };
+        }
+
+        function renderTxItemsHtml(data) {
+            const allTxs = (data && data.transactions) || [];
+            if (allTxs.length === 0) {
+                return '<p style="color: var(--muted); text-align: center; padding: 20px 0;">Chưa có giao dịch nào.</p>';
             }
+
+            const filtered = getFilteredTransactions(data);
+            const stats = getTxStats(filtered);
             const canDel = state.allowed_edits && state.allowed_edits.includes('edit_tx');
-            let html = '<div class="card"><div class="card-title">Giao dịch gần đây</div>';
-            data.transactions.slice(0, 15).forEach(t => {
+            const limit = txState.limit || 30;
+            const visible = filtered.slice(0, limit);
+
+            let html = '';
+
+            html += `
+                <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.8rem; color: var(--muted); padding-bottom: 8px; border-bottom: 1px solid rgba(59, 51, 99, 0.4); margin-bottom: 6px;">
+                    <span>Hiển thị <strong>${visible.length}</strong> / <strong>${filtered.length}</strong> giao dịch</span>
+                    <span>
+                        <span style="color: var(--mint);">+${fmtMoney(stats.inc)}</span> • 
+                        <span style="color: var(--coral);">-${fmtMoney(stats.exp)}</span>
+                    </span>
+                </div>
+            `;
+
+            if (filtered.length === 0) {
+                html += '<p style="color: var(--muted); text-align: center; padding: 24px 0;">Không tìm thấy giao dịch nào phù hợp.</p>';
+                return html;
+            }
+
+            visible.forEach(t => {
                 const isInc = t.kind === 'income';
-                const delBtn = canDel ? `<button class="btn-del" onclick="confirmDeleteTx(${t.id})">✕</button>` : '';
+                const delBtn = canDel ? `<button class="btn-del" onclick="confirmDeleteTx(${t.id})" title="Xoá">✕</button>` : '';
+                const catEsc = escapeHtml(t.category || 'Khác');
+                const noteEsc = escapeHtml(t.note || '');
                 html += `
                     <div class="list-item">
-                        <div>
-                            <div style="font-weight: 600; font-size: 0.9rem;">${t.category || 'Khác'}</div>
-                            <div style="font-size: 0.75rem; color: var(--muted);">${t.date} ${t.note ? '• ' + t.note : ''}</div>
+                        <div style="flex: 1; padding-right: 8px;">
+                            <div style="font-weight: 600; font-size: 0.9rem;">${catEsc}</div>
+                            <div style="font-size: 0.75rem; color: var(--muted); margin-top: 2px;">
+                                ${t.date} ${noteEsc ? '• ' + noteEsc : ''}
+                            </div>
                         </div>
                         <div style="display: flex; align-items: center; gap: 8px;">
-                            <div style="font-weight: 700; color: ${isInc ? 'var(--mint)' : 'var(--coral)'}; font-size: 0.95rem;">
+                            <div style="font-weight: 700; color: ${isInc ? 'var(--mint)' : 'var(--coral)'}; font-size: 0.95rem; white-space: nowrap;">
                                 ${isInc ? '+' : '-'}${fmtMoney(t.amount)}
                             </div>
                             ${delBtn}
@@ -1009,8 +1125,86 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
                     </div>
                 `;
             });
-            html += '</div>';
+
+            if (filtered.length > limit) {
+                const remaining = filtered.length - limit;
+                const nextChunk = Math.min(30, remaining);
+                html += `
+                    <div style="display: flex; gap: 8px; margin-top: 14px;">
+                        <button type="button" class="btn-sub-action" style="flex: 1; padding: 10px; font-size: 0.85rem;" onclick="loadMoreTx(30)">
+                            Xem thêm (+${nextChunk} giao dịch, còn ${remaining})
+                        </button>
+                        <button type="button" class="btn-sub-action" style="padding: 10px 14px; font-size: 0.85rem;" onclick="loadAllTx()">
+                            Xem tất cả (${filtered.length})
+                        </button>
+                    </div>
+                `;
+            } else if (filtered.length > 30) {
+                html += `
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 12px; font-size: 0.8rem; color: var(--muted);">
+                        <span>Đã hiển thị tất cả ${filtered.length} giao dịch</span>
+                        <button type="button" class="btn-sub-action" style="font-size: 0.75rem; padding: 4px 10px;" onclick="collapseTx()">Thu gọn</button>
+                    </div>
+                `;
+            }
+
             return html;
+        }
+
+        function renderTransactions(data) {
+            if (!data || !data.transactions || data.transactions.length === 0) {
+                return '<div class="card"><div class="card-title">Giao dịch</div><p style="color: var(--muted);">Chưa có giao dịch nào.</p></div>';
+            }
+
+            const curMonth = (state.today || '').slice(0, 7) || (state.month || '');
+            const allTxs = data.transactions;
+            const curMonthCount = curMonth ? allTxs.filter(t => t.date && t.date.startsWith(curMonth)).length : 0;
+
+            const isAllMonth = (txState.monthFilter === 'all');
+            const isCurMonth = (txState.monthFilter === 'current');
+
+            const isAllKind = (txState.filterKind === 'all');
+            const isExp = (txState.filterKind === 'expense');
+            const isInc = (txState.filterKind === 'income');
+
+            return `
+                <div class="card">
+                    <div class="card-title">
+                        <span>Danh sách giao dịch</span>
+                        <span style="font-size: 0.78rem; font-weight: normal; color: var(--muted);">${allTxs.length} giao dịch</span>
+                    </div>
+
+                    <div style="margin-bottom: 8px;">
+                        <input id="txSearchInput" class="form-input" style="font-size: 0.88rem; padding: 8px 12px;"
+                               placeholder="🔍 Tìm kiếm giao dịch, ghi chú, số tiền..."
+                               value="${escapeHtml(txState.search)}"
+                               oninput="onTxSearch(this.value)" />
+                    </div>
+
+                    <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px;">
+                        <button type="button" class="chip-btn ${isAllMonth ? 'selected' : ''}" onclick="setTxMonthFilter('all')">
+                            Tất cả (${allTxs.length})
+                        </button>
+                        ${curMonth ? `
+                        <button type="button" class="chip-btn ${isCurMonth ? 'selected' : ''}" onclick="setTxMonthFilter('current')">
+                            Tháng ${curMonth.slice(5)} (${curMonthCount})
+                        </button>` : ''}
+                        <button type="button" class="chip-btn ${isAllKind ? 'selected' : ''}" onclick="setTxKindFilter('all')">
+                            Mọi loại
+                        </button>
+                        <button type="button" class="chip-btn ${isExp ? 'selected' : ''}" onclick="setTxKindFilter('expense')">
+                            Chi tiêu
+                        </button>
+                        <button type="button" class="chip-btn ${isInc ? 'selected' : ''}" onclick="setTxKindFilter('income')">
+                            Thu nhập
+                        </button>
+                    </div>
+
+                    <div id="txListContainer">
+                        ${renderTxItemsHtml(data)}
+                    </div>
+                </div>
+            `;
         }
 
         function renderChart(data) {

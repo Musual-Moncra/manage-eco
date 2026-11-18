@@ -119,5 +119,39 @@ class AccountsDbTest(unittest.TestCase):
         self.assertEqual(self.store.account_balance(id1), 900_000)
 
 
+    def test_update_account_negative_initial_balance_allowed(self):
+        id1 = self.store.add_account(Account("Tiền mặt", 0))
+        acc = self.store.get_account(id1)
+        acc.initial_balance = -5_000_000
+        self.store.update_account(acc)
+        updated = self.store.get_account(id1)
+        self.assertEqual(updated.initial_balance, -5_000_000)
+
+    def test_legacy_database_migration_removes_check_constraint(self):
+        import sqlite3
+        conn = sqlite3.connect(":memory:")
+        conn.executescript("""
+        CREATE TABLE accounts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT UNIQUE NOT NULL,
+            initial_balance INTEGER NOT NULL DEFAULT 0 CHECK (initial_balance >= 0),
+            is_default INTEGER NOT NULL DEFAULT 0 CHECK (is_default IN (0, 1))
+        );
+        INSERT INTO accounts (id, name, initial_balance, is_default) VALUES (1, 'Tiền mặt', 0, 1);
+        """)
+        # Create a store that wraps this connection or migrates it
+        st = Store.__new__(Store)
+        st.conn = conn
+        st.conn.row_factory = sqlite3.Row
+        acc_sql = st.conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='accounts'").fetchone()
+        self.assertIn("initial_balance >= 0", acc_sql["sql"])
+        # Running the migration logic in __init__
+        Store.__init__(st, ":memory:")
+        # Check that constraint is gone
+        new_sql = st.conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='accounts'").fetchone()
+        self.assertNotIn("initial_balance >= 0", new_sql["sql"])
+        st.close()
+
+
 if __name__ == "__main__":
     unittest.main()

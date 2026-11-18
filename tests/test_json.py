@@ -452,6 +452,31 @@ class JsonCliTest(unittest.TestCase):
         self.err("not_found", 1, "budget", "delete", "food")
         self.err("not_found", 1, "budget", "delete", "missing")
 
+    def test_budget_edit(self):
+        self.ok("budget", "set", "food", "3000000")
+        p = self.ok("budget", "edit", "food", "4000000")
+        self.assert_command(p, "budget edit")
+        self.assertEqual(p["data"]["budget"], {"category": "food", "limit": 4000000})
+
+        # Not found should exit 1
+        self.err("not_found", 1, "budget", "edit", "nonexistent", "1000000")
+
+    def test_budget_adjust(self):
+        self.ok("budget", "set", "food", "3000000")
+        p = self.ok("budget", "adjust", "food", "1200000")
+        self.assert_command(p, "budget adjust")
+        self.assertEqual(p["data"]["budget"]["spent"], 1200000)
+        self.assertEqual(p["data"]["budget"]["remaining"], 1800000)
+        self.assertEqual(p["data"]["budget"]["pct"], 40.0)
+
+        # Check in budget status
+        st = self.ok("budget", "status")
+        bg = next(b for b in st["data"]["budgets"] if b["category"] == "food")
+        self.assertEqual(bg["spent"], 1200000)
+
+        # Not found exits 1
+        self.err("not_found", 1, "budget", "adjust", "nonexistent", "500000")
+
     # --- forecast / goal ----------------------------------------------
     def test_forecast(self):
         self.ok("income", "10000000", "salary", "-d", "2026-11-06")

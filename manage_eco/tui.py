@@ -172,10 +172,12 @@ FORMS = {
     "account_transfer": ("Chuyển tiền nội bộ", [Field("from", "Từ tài khoản", placeholder="tên tài khoản gửi"),
                                                 Field("to", "Đến tài khoản", placeholder="tên tài khoản nhận"),
                                                 _AMOUNT,
+                                                Field("category", "Danh mục", placeholder="(tùy chọn) gán vào ngân sách"),
                                                 Field("date", "Ngày", placeholder="hôm nay"),
                                                 Field("note", "Ghi chú", placeholder="(không bắt buộc)")]),
     "budget": ("Thêm ngân sách", [_CATEGORY, Field("amount", "Hạn mức / tháng", placeholder="vd: 3tr, 100k x 30")]),
     "budget_edit": ("Sửa ngân sách", [Field("amount", "Hạn mức / tháng", placeholder="vd: 3tr, 100k x 30")]),
+    "budget_adjust": ("Chỉnh số đã tiêu", [Field("spent", "Số đã tiêu tháng này", placeholder="vd: 500k, 1.2tr")]),
     "goal": ("Mục tiêu tiết kiệm", [Field("amount", "Số tiền mục tiêu", placeholder="vd: 50tr"),
                                     Field("by", "Đạt trước ngày", placeholder="mặc định: 6 tháng nữa")]),
     "goal_add": ("Thêm mục tiêu tiết kiệm", [Field("name", "Tên mục tiêu", placeholder="vd: Laptop, Du lịch"),
@@ -325,7 +327,7 @@ class Form:
         self.edit_id = None  # type: Optional[int]
 
     def kind(self) -> str:
-        if self.name in ("budget", "budget_edit"):
+        if self.name in ("budget", "budget_edit", "budget_adjust", "account_transfer"):
             return "expense"
         return self.values.get("kind") or self.name
 
@@ -374,8 +376,8 @@ class Form:
         return f.placeholder
 
     def chips(self, f: Field) -> List[Tuple[str, str]]:
-        if f.key == "amount":
-            return {"budget": LIMIT_CHIPS, "budget_edit": LIMIT_CHIPS, "goal": GOAL_CHIPS,
+        if f.key in ("amount", "spent"):
+            return {"budget": LIMIT_CHIPS, "budget_edit": LIMIT_CHIPS, "budget_adjust": LIMIT_CHIPS, "goal": GOAL_CHIPS,
                     "goal_add": GOAL_CHIPS, "goal_edit": GOAL_CHIPS,
                     "goal_save": AMOUNT_CHIPS, "goal_take": AMOUNT_CHIPS}.get(self.name, AMOUNT_CHIPS)
         if f.key == "category":
@@ -461,7 +463,10 @@ class State:
         wake_w = getattr(self, "_wake_w", None)
         if wake_w is not None:
             try:
-                os.write(wake_w, b"m")
+                if callable(wake_w):
+                    wake_w()
+                else:
+                    os.write(wake_w, b"m")
             except OSError:
                 pass
 
@@ -918,6 +923,8 @@ def action_line(state: State, width: int) -> Line:
                 buttons.append(("%s Xoá" % G["del"], G["del"], "x", "x", False))
             elif state.tab in (2, 4) or pending:
                 buttons.append((("%s Sửa" % G["edit"]).strip(), G["edit"] or "Sửa", "e", "e", False))
+            if state.tab == 4:
+                buttons.append(("± Đã tiêu", "±Tiêu", "t", "t", False))
             if state.tab == 3 and pending:
                 buttons.append(("%s Xong" % G["done"], G["done"], "d", "d", False))
                 buttons.append((("%s Huỷ" % G["cancel"]).strip(), G["cancel"] or "Huỷ", "c", "c", False))
@@ -1691,7 +1698,8 @@ def accounts_lines(state: State, width: int, height: int) -> List[Line]:
             route = "%s → %s" % (tr.get("from_account", ""), tr.get("to_account", ""))
             tr_ln = Line().add(" ").cell(tr.get("date", ""), 12).add("  ").cell(route, 30, ACCENT).add("  ")
             tr_ln.cell(money(tr.get("amount", 0)), 16, "bold " + INCOME_C, right=True).add("  ")
-            tr_ln.cell(tr.get("note", ""), 25, MUTED)
+            note_display = ("[%s] " % tr["category"] if tr.get("category") else "") + tr.get("note", "")
+            tr_ln.cell(note_display, 25, MUTED)
             tr_lines.append(tr_ln)
         return acc_box + tr_lines
 
@@ -1851,10 +1859,22 @@ def copy_share_url(state: State) -> None:
         return
     copied = False
     try:
+        import shutil
         import subprocess
-        proc = subprocess.Popen(["pbcopy"], stdin=subprocess.PIPE)
-        proc.communicate(url.encode("utf-8"))
-        copied = True
+        cmd = None
+        if sys.platform == "darwin" and shutil.which("pbcopy"):
+            cmd = ["pbcopy"]
+        elif sys.platform == "win32" and shutil.which("clip"):
+            cmd = ["clip"]
+        else:
+            for candidate in (["wl-copy"], ["xclip", "-selection", "clipboard"], ["xsel", "--clipboard", "--input"]):
+                if shutil.which(candidate[0]):
+                    cmd = candidate
+                    break
+        if cmd:
+            proc = subprocess.Popen(cmd, stdin=subprocess.PIPE)
+            proc.communicate(url.encode("utf-8"))
+            copied = proc.returncode == 0
     except Exception:
         pass
     if copied:
@@ -2032,6 +2052,11 @@ def validate(form: Form, today: date) -> Tuple[str, Dict[str, Any], Dict[str, st
             params["amount"] = parse_money(v["amount"])
         except ValueError:
             errors["amount"] = "Số tiền không hợp lệ (vd: 50k, 1.5tr, 50k+20k, 3x150k)"
+    if "spent" in v:
+        try:
+            params["spent"] = parse_money(v["spent"], allow_zero=True)
+        except ValueError:
+            errors["spent"] = "Số tiền không hợp lệ (vd: 0, 500k, 1.5tr)"
     if "category" in v:
         if v["category"]:
             params["category"] = v["category"]
@@ -2060,6 +2085,8 @@ def validate(form: Form, today: date) -> Tuple[str, Dict[str, Any], Dict[str, st
     if form.name in ("budget", "budget_edit"):
         category = params.get("category") if form.name == "budget" else form.edit_id
         return "budget set", {"category": category, "amount": params.get("amount")}, errors
+    if form.name == "budget_adjust":
+        return "budget adjust", {"category": form.edit_id, "spent": params.get("spent")}, errors
     if form.name == "goal":
         return "goal", {"target": params.get("amount"), "by": params.get("by")}, errors
     if form.name == "goal_add":
@@ -2079,7 +2106,7 @@ def validate(form: Form, today: date) -> Tuple[str, Dict[str, Any], Dict[str, st
         raw_bal = (v.get("balance") or v.get("initial_balance") or "").strip()
         if raw_bal:
             try:
-                init_bal = parse_money(raw_bal, allow_zero=True)
+                init_bal = parse_money(raw_bal, allow_zero=True, allow_negative=True)
             except ValueError:
                 errors["initial_balance"] = "Số dư không hợp lệ (vd: 0, 1tr, 500k)"
                 errors["balance"] = "Số dư không hợp lệ (vd: 0, 1tr, 500k)"
@@ -2091,7 +2118,7 @@ def validate(form: Form, today: date) -> Tuple[str, Dict[str, Any], Dict[str, st
         raw_bal = (v.get("balance") or v.get("initial_balance") or "").strip()
         if raw_bal:
             try:
-                bal = parse_money(raw_bal, allow_zero=True)
+                bal = parse_money(raw_bal, allow_zero=True, allow_negative=True)
                 if "balance" in v:
                     params["balance"] = bal
                 else:
@@ -2106,7 +2133,7 @@ def validate(form: Form, today: date) -> Tuple[str, Dict[str, Any], Dict[str, st
         if not v.get("to"):
             errors["to"] = "Nhập tài khoản đích"
         d_val = params.get("date") or today.isoformat()
-        return "account transfer", {"from": v.get("from"), "to": v.get("to"), "amount": params.get("amount"), "date": d_val, "note": v.get("note", "")}, errors
+        return "account transfer", {"from": v.get("from"), "to": v.get("to"), "amount": params.get("amount"), "category": (v.get("category") or "").strip(), "date": d_val, "note": v.get("note", "")}, errors
     if form.name == "plan_done":
         if "account" in v and not v["account"]:
             if form.cats.get("accounts"):
@@ -2353,6 +2380,13 @@ def submit(state: State, api: ApiCall) -> None:
         celebrate(state, api, "%s ngân sách %s %s" % (verb, G["ok"], item), "save", "pencil" if edited else "check",
                   verb + "!", item)
         return
+    if cmd == "budget adjust":
+        b = result.get("budget") or {}
+        cat = b.get("category", params.get("category", ""))
+        spent_str = money(b.get("spent", 0))
+        celebrate(state, api, "Đã chỉnh số đã tiêu %s: %s" % (cat, spent_str), "save", "pencil",
+                  "Đã lưu!", "%s: %s" % (cat, spent_str))
+        return
     if cmd == "goal":
         sub = "cần %s/tháng · %d tháng" % (short_money(result.get("per_month", 0)), result.get("months_left", 0))
         state.goal = None  # set after the refresh: it is fresh already
@@ -2390,7 +2424,8 @@ def submit(state: State, api: ApiCall) -> None:
     if cmd == "account transfer":
         tr = result.get("transfer") or {}
         amt = money(tr.get("amount", 0))
-        msg = "%s → %s: %s" % (tr.get("from_account", ""), tr.get("to_account", ""), amt)
+        cat_suffix = " [%s]" % tr["category"] if tr.get("category") else ""
+        msg = "%s → %s: %s%s" % (tr.get("from_account", ""), tr.get("to_account", ""), amt, cat_suffix)
         celebrate(state, api, "Đã chuyển %s" % msg, "save", "coin", "Đã chuyển!", msg)
         return
     if cmd == "plan done":
@@ -2592,6 +2627,12 @@ def handle_key(state: State, key: str, api: ApiCall) -> None:
         state.settings = True
     elif key in ("[", "]") and state.tab in (2, 4):
         move_month(state, api, "tx" if state.tab == 2 else "budget", -1 if key == "[" else 1)
+    elif (key in ("budget_adjust", "t") and state.tab == 4) and state.selected is not None:
+        b = items[state.selected]
+        form = open_form(state, "budget_adjust", api)
+        form.values["spent"] = _amount_text(b["spent"])
+        form.title = "Chỉnh đã tiêu: %s" % b["category"]
+        form.edit_id = b["category"]
     elif key == "b":
         open_form(state, "budget", api)
     elif key == "g":
@@ -2828,8 +2869,6 @@ def _default_api(store, today: date) -> ApiCall:
 
 
 def run_tui(store, today: date, api: Optional[ApiCall] = None, clock: Callable[[], float] = time.monotonic) -> None:
-    import termios
-    import tty
     from rich.console import Console
     from rich.live import Live
 
@@ -2839,16 +2878,35 @@ def run_tui(store, today: date, api: Optional[ApiCall] = None, clock: Callable[[
     state.now = clock()
     init(state, call)
 
-    fd = sys.stdin.fileno()
-    old = termios.tcgetattr(fd)
-    wake_r, wake_w = os.pipe()
-    state._wake_w = wake_w
-    old_winch = signal.signal(signal.SIGWINCH, lambda *_: os.write(wake_w, b"x"))
+    if sys.platform == "win32":
+        from manage_eco.win_console import WinConsole, WinKeyReader
+
+        win_con = WinConsole()
+        win_con.enter()
+        state._wake_w = win_con.wake
+        reader = WinKeyReader(win_con, parse_input)
+        restore = win_con.close
+    else:
+        import termios
+        import tty
+
+        fd = sys.stdin.fileno()
+        old = termios.tcgetattr(fd)
+        wake_r, wake_w = os.pipe()
+        state._wake_w = wake_w
+        old_winch = signal.signal(signal.SIGWINCH, lambda *_: os.write(wake_w, b"x"))
+        tty.setcbreak(fd)
+        reader = KeyReader(fd, wake_r)
+
+        def restore() -> None:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old)
+            signal.signal(signal.SIGWINCH, old_winch)
+            os.close(wake_r)
+            os.close(wake_w)
+
     console = Console()
-    reader = KeyReader(fd, wake_r)
     out_fd = sys.__stdout__.fileno()  # bypass Live's stdout proxy, which would swallow escape codes
     try:
-        tty.setcbreak(fd)
         with Live(Text(), console=console, screen=True, auto_refresh=False,
                   redirect_stdout=False, redirect_stderr=False) as live:
             console.file.flush()
@@ -2868,8 +2926,8 @@ def run_tui(store, today: date, api: Optional[ApiCall] = None, clock: Callable[[
             state.share_server.stop()
         if hasattr(state, "share_tunnel") and state.share_tunnel:
             state.share_tunnel.stop()
-        os.write(out_fd, MOUSE_OFF.encode())
-        termios.tcsetattr(fd, termios.TCSADRAIN, old)
-        signal.signal(signal.SIGWINCH, old_winch)
-        os.close(wake_r)
-        os.close(wake_w)
+        try:
+            os.write(out_fd, MOUSE_OFF.encode())
+        except OSError:
+            pass
+        restore()
