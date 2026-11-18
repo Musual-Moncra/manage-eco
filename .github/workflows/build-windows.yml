@@ -26,6 +26,8 @@ jobs:
           pip install -e . pyinstaller
 
       - name: Run unit tests (core)
+        env:
+          PYTHONUTF8: "1"
         run: |
           python -m unittest tests/test_cli.py tests/test_sfx.py tests/test_json.py tests/test_plans.py tests/test_accounts_cli.py -v
 

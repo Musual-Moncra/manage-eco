@@ -85,6 +85,8 @@ def sound_path(event: str) -> str:
 
 def player() -> Optional[List[str]]:
     """Command prefix for the first available audio player, or None."""
+    if sys.platform == "win32":
+        return ["__winsound__"]
     if sys.platform == "darwin" and shutil.which("afplay"):
         return ["afplay", "-v", "0.6"]
     for cmd in (["paplay"], ["pw-play"], ["aplay", "-q"]):
@@ -109,13 +111,6 @@ def play(event: str, enabled: bool = True) -> bool:
         _procs[:] = [p for p in _procs if p.poll() is None]  # reap finished players
         if len(_procs) >= 4:
             return False
-        if sys.platform == "win32":
-            try:
-                import winsound
-                winsound.PlaySound(sound_path(event), winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
-                return True
-            except Exception:
-                return False
         cmd = player()
         try:
             if cmd is None:
@@ -124,6 +119,10 @@ def play(event: str, enabled: bool = True) -> bool:
                     sys.__stdout__.flush()
                     return True
                 return False
+            if cmd == ["__winsound__"]:
+                import winsound
+                winsound.PlaySound(sound_path(event), winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
+                return True
             _procs.append(subprocess.Popen(cmd + [sound_path(event)], stdin=subprocess.DEVNULL,
                                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                            start_new_session=True))
